@@ -1,0 +1,60 @@
+# --- Runtime data & secrets ---
+data/
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.python-version
+
+# --- Node / JS ---
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.eslintcache
+coverage/
+
+# --- NX ---
+.nx/cache/
+.nx/workspace-data/
+
+# --- AI model weights ---
+# Weights live under data/models/ (bind-mounted, already ignored above).
+# This catches stray weight files downloaded or saved elsewhere in the repo.
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
+*.bin
+*.gguf
+*.ckpt
+*.h5
+*.pb
+*.tflite
+*.npz
+
+# --- Logs & temp ---
+*.log
+*.lock.tmp
+tmp/
+
+# --- Editor / OS ---
+.DS_Store
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

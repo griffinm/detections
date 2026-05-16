@@ -1,0 +1,93 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: vd
+      POSTGRES_PASSWORD: vd
+      POSTGRES_DB: video_detection
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vd"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker-cpu:
+    build:
+      context: ../
+      dockerfile: docker/worker/Dockerfile
+      target: cpu
+    env_file: ../.env
+    volumes:
+      - ../data/videos:/data/videos
+      - ../data/frames:/data/frames
+      - ../data/models:/data/models
+    command: celery -A worker.app worker -Q cpu -c 2 --loglevel=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-gpu:
+    build:
+      context: ../
+      dockerfile: docker/worker/Dockerfile
+      target: gpu
+    env_file: ../.env
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ../data/videos:/data/videos
+      - ../data/frames:/data/frames
+      - ../data/models:/data/models
+    command: celery -A worker.app worker -Q gpu,train -c 1 --loglevel=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  ingest-watcher:
+    build:
+      context: ../
+      dockerfile: docker/watcher/Dockerfile
+    env_file: ../.env
+    environment:
+      VD_INBOX_DIR: /data/videos/inbox
+    volumes:
+      - ../data/videos:/data/videos
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  flower:
+    image: mher/flower:2.0
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+
+volumes:
+  pgdata: {}

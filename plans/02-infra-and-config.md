@@ -1,0 +1,266 @@
+# 02 — Infrastructure & Configuration
+
+## Goals
+
+- One-command bring-up of all data + worker services in docker-compose.
+- The worker container has GPU access via NVIDIA Container Toolkit.
+- Configuration is centralized in `.env` and surfaced via `pydantic-settings`.
+- Folders for videos, frames, and model weights are bind-mounted, not stored
+  in volumes, so the host can drop files in and the user can inspect outputs.
+
+## Host prerequisites
+
+Ubuntu 22.04 / 24.04 reference. Document in README:
+
+1. **NVIDIA driver** (matched to CUDA 12.x — Ultralytics 8.3+ targets CUDA 12).
+2. **Docker Engine 25+** with `compose` plugin.
+3. **NVIDIA Container Toolkit**: `nvidia-ctk` installed; `/etc/docker/daemon.json`
+   has `"default-runtime": "nvidia"` (or services declare it per the compose
+   schema below). Verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`.
+4. **`uv` installed** (host tools).
+
+## docker-compose services
+
+`docker/docker-compose.yml` (production-ish) + `docker-compose.override.yml`
+(dev overrides like exposed ports, bind-mounted source, debug logging).
+
+```yaml
+# docker/docker-compose.yml (abridged)
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: vd
+      POSTGRES_PASSWORD: vd
+      POSTGRES_DB: video_detection
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vd"]
+      interval: 5s
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  worker-cpu:
+    build:
+      context: ../
+      dockerfile: docker/worker/Dockerfile
+      target: cpu
+    env_file: ../.env
+    volumes:
+      - ../data/videos:/data/videos
+      - ../data/frames:/data/frames
+      - ../data/models:/data/models
+    command: celery -A worker.app worker -Q cpu -c 2 --loglevel=INFO
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  worker-gpu:
+    build:
+      context: ../
+      dockerfile: docker/worker/Dockerfile
+      target: gpu
+    env_file: ../.env
+    runtime: nvidia                # if default-runtime is not nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ../data/videos:/data/videos
+      - ../data/frames:/data/frames
+      - ../data/models:/data/models
+    command: celery -A worker.app worker -Q gpu,train -c 1 --loglevel=INFO
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  ingest-watcher:
+    build:
+      context: ../
+      dockerfile: docker/watcher/Dockerfile
+    env_file: ../.env
+    volumes:
+      - ../data/videos:/data/videos
+    depends_on:
+      redis: { condition: service_healthy }
+
+  flower:                          # optional: Celery UI
+    image: mher/flower:2.0
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    ports: ["5555:5555"]
+    depends_on: [redis]
+
+volumes:
+  pgdata: {}
+```
+
+The `api` service is intentionally NOT in compose — by default we run it on
+the host (`nx run api:serve`) for fast iteration. There's a compose profile
+called `full` that adds it for environments where everything should be
+containerized.
+
+## Worker Dockerfile (multi-stage)
+
+```dockerfile
+# docker/worker/Dockerfile
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 python3.12-venv python3-pip ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv
+WORKDIR /app
+
+FROM base AS gpu
+# Copy lockfile + project metadata, then sync (cacheable layer)
+COPY apps/worker/pyproject.toml apps/worker/uv.lock /app/apps/worker/
+COPY libs/python /app/libs/python
+RUN cd /app/apps/worker && uv sync --frozen --no-dev
+COPY apps/worker /app/apps/worker
+ENV PYTHONPATH=/app/apps/worker
+CMD ["uv", "run", "celery", "-A", "worker.app", "worker"]
+
+FROM base AS cpu
+# CPU image omits torch+cu* — uses cpu wheels via uv extras (`--extra cpu`)
+COPY apps/worker/pyproject.toml apps/worker/uv.lock /app/apps/worker/
+COPY libs/python /app/libs/python
+RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra cpu
+COPY apps/worker /app/apps/worker
+ENV PYTHONPATH=/app/apps/worker
+CMD ["uv", "run", "celery", "-A", "worker.app", "worker"]
+```
+
+Notes:
+- The `gpu` worker handles `gpu` and `train` queues; the `cpu` worker handles
+  `cpu` (ingest, ffmpeg, DB-bound work). This keeps the single GPU from being
+  saturated by ffmpeg jobs.
+- ffmpeg is installed system-wide and called via subprocess. Frame extraction
+  is CPU-bound; running it on the `cpu` worker keeps GPU free for inference.
+
+## Folder layout (bind-mounted)
+
+```
+data/
+├── videos/
+│   ├── inbox/          # drop zone (watched)
+│   ├── processed/      # moved here on success
+│   └── failed/         # moved here on permanent failure
+├── frames/
+│   └── <clip_id>/      # frame_0001.jpg, frame_0002.jpg, …
+└── models/
+    ├── yolo/
+    │   ├── base/       # ultralytics base weights (downloaded once)
+    │   └── runs/<run_id>/{weights,metrics.json}
+    ├── insightface/    # arcface + retinaface weights (buffalo_l pack)
+    ├── hf/             # Hugging Face cache — DINOv2 weights
+    └── classifiers/
+        └── <class_id>/<version>.joblib
+```
+
+All paths are configurable via env vars. The defaults are above.
+
+The GPU worker container sets `INSIGHTFACE_HOME=/data/models/insightface` and
+`HF_HOME=/data/models/hf` so InsightFace and DINOv2 weights download once onto
+the mounted `models/` volume rather than on every container start.
+
+## Configuration (`.env` + pydantic-settings)
+
+A `libs/python/settings` package exposes a `Settings` model loaded once per
+process. The .env values are validated, typed, and re-exported.
+
+```python
+# libs/python/settings/src/settings.py
+from pathlib import Path
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="VD_", extra="ignore")
+
+    # storage
+    inbox_dir: Path = Path("/data/videos/inbox")
+    processed_dir: Path = Path("/data/videos/processed")
+    failed_dir: Path = Path("/data/videos/failed")
+    frames_dir: Path = Path("/data/frames")
+    models_dir: Path = Path("/data/models")
+
+    # database
+    database_url: str = "postgresql+asyncpg://vd:vd@localhost:5432/video_detection"
+
+    # queue
+    redis_url: str = "redis://localhost:6379/0"
+
+    # processing
+    frame_fps: float = 1.0
+    detection_min_confidence: float = 0.25
+    subclass_min_confidence: float = 0.55
+    frame_jpeg_quality: int = 90
+    detect_batch_size: int = 16
+
+    # training
+    custom_class_finetune_threshold: int = 100
+    subclass_retrain_threshold: int = 25
+    yolo_base_model: str = "yolo11l.pt"
+    insightface_pack: str = "buffalo_l"
+
+    # delete vs retain
+    delete_processed_videos: bool = False       # if true, remove from /processed on cleanup
+    delete_frames_without_objects: bool = True  # if true, prune empty frames' files
+```
+
+The same `.env` is loaded by both the host-run API and the containerized
+worker. The compose file maps it in via `env_file`.
+
+## Env vars (canonical list)
+
+| Var                                | Default                                | Notes                                |
+|------------------------------------|----------------------------------------|--------------------------------------|
+| `VD_DATABASE_URL`                  | `postgresql+asyncpg://vd:vd@…`         |                                       |
+| `VD_REDIS_URL`                     | `redis://localhost:6379/0`             |                                       |
+| `VD_INBOX_DIR`                     | `/data/videos/inbox`                   | watched folder                        |
+| `VD_FRAMES_DIR`                    | `/data/frames`                         |                                       |
+| `VD_MODELS_DIR`                    | `/data/models`                         |                                       |
+| `VD_FRAME_FPS`                     | `1.0`                                  | sampling rate                         |
+| `VD_DETECTION_MIN_CONFIDENCE`      | `0.25`                                 | "no objects" cutoff                   |
+| `VD_SUBCLASS_MIN_CONFIDENCE`       | `0.55`                                 | cosine-sim threshold for kNN          |
+| `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD`| `100`                                 | labels needed to trigger fine-tune    |
+| `VD_DELETE_FRAMES_WITHOUT_OBJECTS` | `true`                                 | requirement says discard empties      |
+| `VD_DETECT_BATCH_SIZE`             | `16`                                   | frames per `vd.detect_frame_batch` task |
+
+## GPU sanity check
+
+A `nx run worker:gpu-check` target runs:
+```python
+import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))
+from ultralytics import YOLO; YOLO("yolo11n.pt")("ultralytics/assets/bus.jpg", device=0)
+```
+inside the GPU worker container. This is part of bootstrap verification.
+
+## Backups / data safety
+
+- v1: bind-mounted data is on the host filesystem — user's responsibility to
+  back up. Document with a one-liner cron snippet (`pg_dump` + `tar` of
+  `data/`).
+- v2 (future): a `backup` service in compose that nightly dumps Postgres
+  and rsyncs `data/` to a configured destination.
+
+## Open questions
+
+- **NVIDIA Container Toolkit version**: pin to a tested combo
+  (driver / CUDA / pytorch / ultralytics) and document it. Suggest:
+  driver ≥ 535, CUDA 12.4, PyTorch 2.4+, Ultralytics 8.3+.
+- **Disk pressure**: at 1 FPS the frames directory grows quickly. *(Phase 7)*
+  The `/system` page shows per-directory usage and runs a "purge frames older
+  than N days" tool (`POST /system/purge-frames` → `vd.purge_frames`); see
+  `docs/runbook.md` for a cron-able equivalent.

@@ -1,0 +1,37 @@
+{
+  "name": "worker",
+  "projectType": "application",
+  "root": "apps/worker",
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "uv run ruff check .", "cwd": "{projectRoot}" }
+    },
+    "format": {
+      "executor": "nx:run-commands",
+      "options": { "command": "uv run ruff format .", "cwd": "{projectRoot}" }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": { "command": "uv run mypy src/", "cwd": "{projectRoot}" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "uv run pytest -q", "cwd": "{projectRoot}" }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run celery -A worker.app worker -Q cpu --loglevel=INFO",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "gpu-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker compose -f docker/docker-compose.yml run --rm worker-gpu uv run python -m worker.gpu_check",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
+}

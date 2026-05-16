@@ -1,0 +1,78 @@
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+
+interface SseEvent {
+  type: string;
+  clip_id?: string;
+  frame_id?: string;
+  frame_count?: number;
+  training_run_id?: string;
+}
+
+export function useLiveEvents() {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    const es = new EventSource("/api/stream/events");
+
+    es.onmessage = (ev: MessageEvent<string>) => {
+      try {
+        const e = JSON.parse(ev.data) as SseEvent;
+        switch (e.type) {
+          case "clip.created":
+            void qc.invalidateQueries({ queryKey: ["clips"] });
+            break;
+          case "clip.status":
+            void qc.invalidateQueries({ queryKey: ["clips"] });
+            if (e.clip_id) void qc.invalidateQueries({ queryKey: ["clips", e.clip_id] });
+            break;
+          case "clip.done":
+            void qc.invalidateQueries({ queryKey: ["clips"] });
+            if (e.clip_id) {
+              void qc.invalidateQueries({ queryKey: ["clips", e.clip_id] });
+              void qc.invalidateQueries({ queryKey: ["clips", e.clip_id, "frames"] });
+            }
+            break;
+          case "clip.deleted":
+            void qc.invalidateQueries({ queryKey: ["clips"] });
+            void qc.invalidateQueries({ queryKey: ["system", "disk"] });
+            break;
+          case "frame.detect.done":
+            if (e.clip_id) void qc.invalidateQueries({ queryKey: ["clips", e.clip_id, "frames"] });
+            if (e.frame_id) void qc.invalidateQueries({ queryKey: ["frames", e.frame_id] });
+            break;
+          case "frame.updated":
+            if (e.clip_id) void qc.invalidateQueries({ queryKey: ["clips", e.clip_id, "frames"] });
+            if (e.frame_id) void qc.invalidateQueries({ queryKey: ["frames", e.frame_id] });
+            void qc.invalidateQueries({ queryKey: ["labeling-queue"] });
+            void qc.invalidateQueries({ queryKey: ["metrics"] });
+            break;
+          case "training_run.update":
+            void qc.invalidateQueries({ queryKey: ["trainingRuns"] });
+            if (e.training_run_id) {
+              void qc.invalidateQueries({
+                queryKey: ["trainingRuns", e.training_run_id],
+              });
+            }
+            void qc.invalidateQueries({ queryKey: ["metrics"] });
+            break;
+          case "model.active_changed":
+            void qc.invalidateQueries({ queryKey: ["models"] });
+            void qc.invalidateQueries({ queryKey: ["classes"] });
+            void qc.invalidateQueries({ queryKey: ["metrics"] });
+            break;
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+
+    es.onerror = () => {
+      // EventSource auto-reconnects
+    };
+
+    return () => {
+      es.close();
+    };
+  }, [qc]);
+}

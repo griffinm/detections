@@ -1,0 +1,49 @@
+{
+  "name": "vd-db",
+  "projectType": "library",
+  "root": "libs/python/db",
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check .",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff format .",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run mypy src/",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run pytest -q",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "migrate": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run alembic upgrade head",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "migration": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run alembic revision --autogenerate -m",
+        "cwd": "{projectRoot}"
+      }
+    }
+  }
+}

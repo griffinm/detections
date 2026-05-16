@@ -1,0 +1,23 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "bundler",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "strict": true,
+    "paths": {
+      "@vd/api-client": ["libs/ts/api-client/src/index.ts"],
+      "@vd/ui": ["libs/ts/ui/src/index.ts"],
+      "@vd/theme": ["libs/ts/theme/src/index.ts"]
+    }
+  }
+}

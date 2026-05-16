@@ -1,0 +1,166 @@
+"""`vd.assign_subclass` — kNN sub-class assignment over `subclass_examples`.
+
+Regime A (bootstrap kNN). The detection's embedding is matched against the
+user-curated example detections of the same class: top-5 nearest, majority
+vote, tie-break on mean cosine similarity. A winner above
+`subclass_min_confidence` is recorded as the prediction and — unless the
+detection has already been user-reviewed — as the current assignment.
+
+Pure compute; safe to re-run.
+"""
+
+import asyncio
+import uuid
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from vd_db import load_effective_settings
+from vd_db.models import (
+    DetectionAudit,
+    DetectionModel,
+    Frame,
+    ModelVersion,
+    Subclass,
+    SubclassExample,
+)
+from vd_tasks.app import celery_app
+
+from worker.db import db_session
+from worker.events import publish
+
+
+async def _knn_subclass(
+    session: AsyncSession,
+    class_id: uuid.UUID,
+    detection_id: uuid.UUID,
+    query_vec: object,
+    use_face: bool,
+) -> tuple[uuid.UUID, float] | None:
+    """Return the (subclass_id, confidence) winner of a top-5 cosine kNN.
+
+    The winner is the sub-class with the most votes among the 5 nearest
+    example detections; ties break on mean cosine similarity, which is also
+    the reported confidence. The detection itself is excluded so an example
+    cannot self-confirm.
+    """
+    emb = DetectionModel.face_embedding if use_face else DetectionModel.object_embedding
+    distance = emb.cosine_distance(query_vec)
+    rows = (
+        await session.execute(
+            select(Subclass.id, distance.label("dist"))
+            .select_from(SubclassExample)
+            .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
+            .join(Subclass, Subclass.id == SubclassExample.subclass_id)
+            .where(
+                Subclass.class_id == class_id,
+                Subclass.is_active.is_(True),
+                DetectionModel.id != detection_id,
+                DetectionModel.deleted_at.is_(None),
+                emb.is_not(None),
+            )
+            .order_by(distance)
+            .limit(5)
+        )
+    ).all()
+    if not rows:
+        return None
+
+    sims: dict[uuid.UUID, list[float]] = {}
+    for subclass_id, dist in rows:
+        sims.setdefault(subclass_id, []).append(1.0 - float(dist))
+    winner = max(sims, key=lambda sid: (len(sims[sid]), sum(sims[sid]) / len(sims[sid])))
+    members = sims[winner]
+    return winner, sum(members) / len(members)
+
+
+async def _assign_subclass_async(detection_id: str) -> bool:
+    det_id = uuid.UUID(detection_id)
+
+    async with db_session() as session:
+        settings = await load_effective_settings(session)
+        detection = await session.get(DetectionModel, det_id)
+        if (
+            detection is None
+            or detection.deleted_at is not None
+            or detection.class_id is None
+        ):
+            return False
+
+        has_subclass = await session.scalar(
+            select(func.count())
+            .select_from(Subclass)
+            .where(Subclass.class_id == detection.class_id, Subclass.is_active.is_(True))
+        )
+        if not has_subclass:
+            return False
+
+        if detection.face_embedding is not None:
+            query_vec, use_face = detection.face_embedding, True
+        elif detection.object_embedding is not None:
+            query_vec, use_face = detection.object_embedding, False
+        else:
+            return False
+
+        # Regime B: an active per-class classifier supersedes the kNN bootstrap.
+        classifier_version = await session.scalar(
+            select(ModelVersion).where(
+                ModelVersion.kind == "classifier",
+                ModelVersion.target_class_id == detection.class_id,
+                ModelVersion.is_active.is_(True),
+            )
+        )
+        audit_model_version_id = detection.model_version_id
+        if classifier_version is not None:
+            from vd_ml import load_classifier, predict_subclass
+
+            classifier = load_classifier(classifier_version.weights_path)
+            subclass_id_str, confidence = predict_subclass(classifier, list(query_vec))
+            subclass_id = uuid.UUID(subclass_id_str)
+            audit_model_version_id = classifier_version.id
+            # The classifier may name a sub-class deactivated since training.
+            still_active = await session.scalar(
+                select(Subclass.id).where(
+                    Subclass.id == subclass_id, Subclass.is_active.is_(True)
+                )
+            )
+            if still_active is None:
+                return False
+        else:
+            match = await _knn_subclass(
+                session, detection.class_id, det_id, query_vec, use_face
+            )
+            if match is None:
+                return False
+            subclass_id, confidence = match
+
+        if confidence < settings.subclass_min_confidence:
+            return False
+
+        detection.predicted_subclass_id = subclass_id
+        detection.confidence_subclass = confidence
+        if not detection.reviewed:
+            detection.subclass_id = subclass_id
+        session.add(
+            DetectionAudit(
+                detection_id=det_id,
+                to_subclass_id=subclass_id,
+                reason="initial_prediction",
+                model_version_id=audit_model_version_id,
+            )
+        )
+        frame_id = detection.frame_id
+        clip_id = await session.scalar(select(Frame.clip_id).where(Frame.id == frame_id))
+        await session.commit()
+
+    if clip_id is not None:
+        await publish("frame.updated", clip_id=str(clip_id), frame_id=str(frame_id))
+    return True
+
+
+@celery_app.task(name="vd.assign_subclass", bind=True, max_retries=3)
+def assign_subclass(self, detection_id: str) -> bool:  # type: ignore[misc]
+    try:
+        return asyncio.run(_assign_subclass_async(detection_id))
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=10) from exc

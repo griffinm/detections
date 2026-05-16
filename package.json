@@ -1,0 +1,19 @@
+{
+  "name": "video-detection",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "prepare": "pre-commit install || true",
+    "dev": "./tools/scripts/dev.sh",
+    "gpu": "docker compose -f docker/docker-compose.yml up --build worker-gpu"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "nx"]
+  },
+  "devDependencies": {
+    "@nxlv/python": "^22.0.0",
+    "nx": "^20.8.0",
+    "prettier": "^3.2.5",
+    "eslint": "^9.0.0"
+  }
+}

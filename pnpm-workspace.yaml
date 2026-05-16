@@ -1,0 +1,8 @@
+packages:
+  - "apps/web"
+  - "libs/ts/api-client"
+  - "libs/ts/ui"
+  - "libs/ts/theme"
+allowBuilds:
+  esbuild: set this to true or false
+  nx: set this to true or false

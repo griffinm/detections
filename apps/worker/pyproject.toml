@@ -13,6 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 gpu = [
   "torch>=2.3",
+  "torchvision>=0.18",
   "ultralytics>=8.3",
   "insightface>=0.7",
   "onnxruntime-gpu>=1.18",
@@ -30,11 +31,36 @@ cpu = [
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
+# The cpu/gpu extras pull torch from different wheel indexes and are never
+# installed together — declaring them conflicting lets uv resolve each split.
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
+
 [tool.uv.sources]
 vd-settings = { path = "../../libs/python/settings", editable = true }
 vd-db = { path = "../../libs/python/db", editable = true }
 vd-tasks = { path = "../../libs/python/tasks", editable = true }
 vd-ml = { path = "../../libs/python/ml", editable = true }
+# Pin torch to the right PyTorch wheel index per extra: CUDA 12.4 builds for
+# the `gpu` worker (generic PyPI torch ships no CUDA kernels), CPU-only builds
+# for the `cpu` worker. Without this the gpu image silently runs on the CPU.
+torch = [
+  { index = "pytorch-cu124", extra = "gpu" },
+  { index = "pytorch-cpu", extra = "cpu" },
+]
+torchvision = [
+  { index = "pytorch-cu124", extra = "gpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100

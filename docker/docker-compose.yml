@@ -32,6 +32,11 @@ services:
       dockerfile: docker/worker/Dockerfile
       target: cpu
     env_file: ../.env
+    # Override the .env host URLs: inside the compose network the database
+    # and broker are reached by container name, not localhost.
+    environment:
+      VD_DATABASE_URL: postgresql+asyncpg://vd:vd@postgres:5432/video_detection
+      VD_REDIS_URL: redis://redis:6379/0
     volumes:
       - ../data/videos:/data/videos
       - ../data/frames:/data/frames
@@ -49,6 +54,9 @@ services:
       dockerfile: docker/worker/Dockerfile
       target: gpu
     env_file: ../.env
+    environment:
+      VD_DATABASE_URL: postgresql+asyncpg://vd:vd@postgres:5432/video_detection
+      VD_REDIS_URL: redis://redis:6379/0
     runtime: nvidia
     deploy:
       resources:
@@ -75,6 +83,7 @@ services:
     env_file: ../.env
     environment:
       VD_INBOX_DIR: /data/videos/inbox
+      VD_REDIS_URL: redis://redis:6379/0
     volumes:
       - ../data/videos:/data/videos
     depends_on:

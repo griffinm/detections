@@ -29,6 +29,15 @@ tick the relevant plan doc.
   (rejection audits) into the classifier as negatives at retrain. *Where:*
   `train_subclass_classifier`. (plan 06 open question)
 
+- **`status='failed'` clip row for ingest failures** — `vd.ingest_video` now
+  quarantines a permanently-failing source video to `failed/` so the inbox
+  watcher stops looping on it, but writes no `clips` row (ingest may fail
+  before any row exists, e.g. a corrupt file that breaks `ffprobe`). A failed
+  ingest is therefore invisible in the UI. *Why:* needs a place to surface
+  row-less failures — either a synthetic `clips` row keyed on the file SHA or
+  a separate `ingest_failures` table. *Where:*
+  `apps/worker/src/worker/tasks/ingest.py`. (plan 05)
+
 ## Metrics & observability
 
 - **`daily_metrics` materialized view + nightly refresh** — Phase 6 metrics are
@@ -50,18 +59,12 @@ tick the relevant plan doc.
 
 ## Labeling UI
 
-- **On-canvas "original → current" chip** on the selected detection
-  (e.g. "person → Mallory"). *Why:* the Konva canvas renders no text labels
-  yet; the sub-class is shown in the left rail / class picker instead. *Where:*
-  `apps/web/src/components/labeling/LabelingCanvas.tsx`. (plan 08)
-
-- **Inline "+ New sub-class"** in the labeling class picker — sub-class CRUD
-  currently lives only on the `/classes/:id` page. *Where:*
-  `apps/web/src/components/labeling/ClassPicker.tsx`. (plan 08)
-
-- **Labeling-queue strategies** beyond `lowconf` — `unreviewed` (newest first),
-  `recent corrections` (kNN over a corrected detection's embedding), and
-  class-targeted. *Where:* `apps/api/src/api/routers/labeling.py`. (plan 08)
+- **`recent corrections` labeling-queue strategy** — surface unreviewed frames
+  visually similar to a recently corrected detection, as a pgvector kNN over
+  that detection's embedding. *Why:* the `lowconf`, `unreviewed`, and
+  class-targeted strategies shipped; this one needs a similarity query seeded
+  from a correction and is disproportionately large. *Where:*
+  `apps/api/src/api/routers/labeling.py`. (plan 08)
 
 ## Testing
 

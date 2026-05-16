@@ -3,10 +3,10 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db
+from api.deps import get_db, settings
 from api.schemas.detection import DetectionRead
 from api.schemas.frame import FrameDetail, FrameRead
 from api.services.events import publish
@@ -86,3 +86,25 @@ async def review_frame(
     await publish("frame.updated", clip_id=str(frame.clip_id), frame_id=str(frame.id))
     await maybe_trigger_training(db, {det.class_id for det in unreviewed})
     return _frame_detail(frame, await _active_detections(db, frame_id))
+
+
+@router.delete("/{frame_id}", status_code=204)
+async def delete_frame(
+    frame_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Hard-delete a frame: its JPEG, its row, and — via the `ondelete=CASCADE`
+    FKs — its detections and their audit rows."""
+    frame = await db.get(Frame, frame_id)
+    if frame is None:
+        raise HTTPException(status_code=404, detail="Frame not found")
+
+    jpeg = settings.frames_dir / frame.path if frame.path else None
+    # Core delete so the FK cascade drops detections + audits; an ORM
+    # `session.delete` would instead try to NULL the child FKs.
+    await db.execute(delete(Frame).where(Frame.id == frame_id))
+    await db.commit()
+    # Unlink only after the row is gone: a leftover JPEG is harmless and
+    # purgeable, but a row pointing at a missing file is not.
+    if jpeg is not None:
+        jpeg.unlink(missing_ok=True)

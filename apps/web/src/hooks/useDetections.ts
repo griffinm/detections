@@ -123,36 +123,50 @@ export function useDetectionActions(frameId: string) {
       },
 
       undo: async (): Promise<void> => {
-        const entry = store().popUndo();
+        // Peek, not pop: the stack entry only moves to redo once the inverse
+        // request lands, so a failed call leaves history and server consistent.
+        const entry = store().peekUndo();
         if (!entry) return;
-        if (entry.op === "update") {
-          await applyUpdate(entry.id, entry.prev);
-        } else if (entry.op === "create") {
-          patchCache((f) => ({
-            ...f,
-            detections: f.detections.filter((d) => d.id !== entry.id),
-          }));
-          await deleteDetection(entry.id);
-        } else {
-          const restored = await restoreDetection(entry.id);
-          patchCache((f) => ({ ...f, detections: [...f.detections, restored] }));
+        try {
+          if (entry.op === "update") {
+            await applyUpdate(entry.id, entry.prev);
+          } else if (entry.op === "create") {
+            await deleteDetection(entry.id);
+            patchCache((f) => ({
+              ...f,
+              detections: f.detections.filter((d) => d.id !== entry.id),
+            }));
+          } else {
+            const restored = await restoreDetection(entry.id);
+            patchCache((f) => ({ ...f, detections: [...f.detections, restored] }));
+          }
+          store().commitUndo();
+        } catch {
+          resync();
+          toast.error("Failed to undo");
         }
       },
 
       redo: async (): Promise<void> => {
-        const entry = store().popRedo();
+        const entry = store().peekRedo();
         if (!entry) return;
-        if (entry.op === "update") {
-          await applyUpdate(entry.id, entry.next);
-        } else if (entry.op === "create") {
-          const restored = await restoreDetection(entry.id);
-          patchCache((f) => ({ ...f, detections: [...f.detections, restored] }));
-        } else {
-          patchCache((f) => ({
-            ...f,
-            detections: f.detections.filter((d) => d.id !== entry.id),
-          }));
-          await deleteDetection(entry.id);
+        try {
+          if (entry.op === "update") {
+            await applyUpdate(entry.id, entry.next);
+          } else if (entry.op === "create") {
+            const restored = await restoreDetection(entry.id);
+            patchCache((f) => ({ ...f, detections: [...f.detections, restored] }));
+          } else {
+            await deleteDetection(entry.id);
+            patchCache((f) => ({
+              ...f,
+              detections: f.detections.filter((d) => d.id !== entry.id),
+            }));
+          }
+          store().commitRedo();
+        } catch {
+          resync();
+          toast.error("Failed to redo");
         }
       },
     };

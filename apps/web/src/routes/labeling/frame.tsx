@@ -26,11 +26,15 @@ export function LabelingFrame() {
 
   const queueIds = useLabelingStore((s) => s.queueIds);
   const resetFrame = useLabelingStore((s) => s.resetFrame);
+  const setActiveFrame = useLabelingStore((s) => s.setActiveFrame);
   const [keymapOpen, setKeymapOpen] = useState(false);
 
   useEffect(() => {
     resetFrame();
-  }, [fid, resetFrame]);
+    // Tell SSE which frame is being edited so it won't refetch under us.
+    setActiveFrame(fid);
+    return () => setActiveFrame(null);
+  }, [fid, resetFrame, setActiveFrame]);
 
   const queueIndex = queueIds.indexOf(fid);
 

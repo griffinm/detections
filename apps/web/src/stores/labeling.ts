@@ -21,6 +21,8 @@ interface LabelingState {
   mode: "idle" | "drawing";
   defaultClassId: string | null;
   queueIds: string[];
+  /** The frame currently open in the labeling UI — SSE skips invalidating it. */
+  activeFrameId: string | null;
   undoStack: EditEntry[];
   redoStack: EditEntry[];
 
@@ -28,9 +30,12 @@ interface LabelingState {
   setMode: (mode: "idle" | "drawing") => void;
   setDefaultClass: (id: string) => void;
   setQueue: (ids: string[]) => void;
+  setActiveFrame: (id: string | null) => void;
   pushEdit: (entry: EditEntry) => void;
-  popUndo: () => EditEntry | undefined;
-  popRedo: () => EditEntry | undefined;
+  peekUndo: () => EditEntry | undefined;
+  peekRedo: () => EditEntry | undefined;
+  commitUndo: () => void;
+  commitRedo: () => void;
   resetFrame: () => void;
 }
 
@@ -39,6 +44,7 @@ export const useLabelingStore = create<LabelingState>((set, get) => ({
   mode: "idle",
   defaultClassId: null,
   queueIds: [],
+  activeFrameId: null,
   undoStack: [],
   redoStack: [],
 
@@ -46,6 +52,7 @@ export const useLabelingStore = create<LabelingState>((set, get) => ({
   setMode: (mode) => set({ mode }),
   setDefaultClass: (defaultClassId) => set({ defaultClassId }),
   setQueue: (queueIds) => set({ queueIds }),
+  setActiveFrame: (activeFrameId) => set({ activeFrameId }),
 
   // A fresh edit invalidates the redo branch.
   pushEdit: (entry) =>
@@ -54,22 +61,33 @@ export const useLabelingStore = create<LabelingState>((set, get) => ({
       redoStack: [],
     })),
 
-  popUndo: () => {
+  // peek* read the entry without mutating; the caller invokes commit* only
+  // once the inverse API request succeeds, so a failed undo/redo leaves the
+  // stacks untouched and re-runnable.
+  peekUndo: () => {
+    const { undoStack } = get();
+    return undoStack[undoStack.length - 1];
+  },
+
+  peekRedo: () => {
+    const { redoStack } = get();
+    return redoStack[redoStack.length - 1];
+  },
+
+  commitUndo: () => {
     const { undoStack, redoStack } = get();
     const entry = undoStack[undoStack.length - 1];
     if (entry) {
       set({ undoStack: undoStack.slice(0, -1), redoStack: [...redoStack, entry] });
     }
-    return entry;
   },
 
-  popRedo: () => {
+  commitRedo: () => {
     const { undoStack, redoStack } = get();
     const entry = redoStack[redoStack.length - 1];
     if (entry) {
       set({ redoStack: redoStack.slice(0, -1), undoStack: [...undoStack, entry] });
     }
-    return entry;
   },
 
   resetFrame: () =>

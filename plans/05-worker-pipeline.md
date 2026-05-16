@@ -229,9 +229,17 @@ Notes:
 ## Idempotency & failure recovery
 
 Each task is idempotent:
-- `ingest_video`: SHA dedup.
+- `ingest_video`: SHA dedup. The source video is moved out of the inbox as
+  the task's *last* step — after the `clips` row is committed and
+  `extract_frames` enqueued. A crash mid-task therefore leaves the file in
+  the inbox for a clean retry; once the file has moved, every prior step has
+  succeeded, so a retry short-circuits on the not-in-inbox check.
 - `extract_frames`: upsert on `(clip_id, frame_index)`.
-- `detect_frame_batch`: skip frames whose `detect_status='done'`.
+- `detect_frame_batch`: skip frames whose `detect_status='done'`. Clip
+  completion is a single conditional `UPDATE clips SET status='done' WHERE
+  status='detecting' AND NOT EXISTS (pending frames)` — the status guard plus
+  `rowcount` make it correct even if batches for one clip run concurrently
+  (a read-then-write check would double-fire `clip.done`).
 - `recognize_face` / `embed_object`: skip if embedding already non-null.
 - `assign_subclass`: pure compute; safe to re-run; only updates if the
   detection has not been user-reviewed.
@@ -241,6 +249,10 @@ Failure handling:
   exponential backoff, jitter.
 - Permanent failures move the clip to `failed/` and set `status='failed'`
   with the error message. Visible in the UI; user can fix and re-enqueue.
+  *Implemented so far:* `ingest_video` quarantines the source video to
+  `failed/` once retries are exhausted, so the inbox watcher stops looping on
+  a bad file. Writing a `status='failed'` `clips` row for ingest failures
+  (where no row may exist yet) is still deferred — see `deferred.md`.
 - Dead-letter queue: failed tasks beyond max_retries are routed to a
   `dead` queue we can inspect via Flower.
 
@@ -269,9 +281,10 @@ Failure handling:
 - **Frame batching**: 16 per batch is the starting point. Tune up if GPU
   underutilized (`nvidia-smi`) — typically 32–64 is sweet spot on a single
   consumer GPU at 960px.
-- **GPU OOM safety net**: trap CUDA OOM in `detect_frame_batch` and halve
-  the batch size on retry. Log a warning so we can permanently lower the
-  default.
+- **GPU OOM safety net**: *implemented* — `vd_ml.yolo.predict_batch` catches
+  CUDA `out of memory` errors, calls `torch.cuda.empty_cache()`, and recurses
+  on each half of the batch; a single image that still OOMs re-raises. If
+  this fires often, lower `VD_DETECT_BATCH_SIZE`.
 - **Process restart cost**: loading YOLO+InsightFace+DINOv2 weights once
   costs ~5–10s. Celery worker `--max-tasks-per-child` should be disabled or
   set very high so we don't reload per task.

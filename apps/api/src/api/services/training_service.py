@@ -6,6 +6,7 @@ fine-tune fires when the labeled dataset grows past
 class gains `subclass_retrain_threshold` new sub-class labels.
 """
 
+import logging
 import uuid
 from typing import Any
 
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import enqueue
 from vd_db import load_effective_settings
 from vd_db.models import Class, DetectionModel, ModelVersion, TrainingRun
+
+logger = logging.getLogger(__name__)
 
 
 def _ground_truth() -> tuple[Any, ...]:
@@ -133,11 +136,17 @@ async def maybe_trigger_classifier(db: AsyncSession, class_id: uuid.UUID) -> Non
 async def maybe_trigger_training(
     db: AsyncSession, class_ids: set[uuid.UUID | None]
 ) -> None:
-    """Best-effort: never let an auto-trigger failure break the originating request."""
+    """Best-effort: never let an auto-trigger failure break the originating request.
+
+    The originating endpoint has already committed by the time this runs, and
+    each trigger commits its own `TrainingRun` independently — so a failure
+    here is logged and swallowed, never rolled back (a rollback would only
+    discard unrelated session state without undoing the committed request).
+    """
     try:
         await maybe_trigger_finetune(db)
         for class_id in class_ids:
             if class_id is not None:
                 await maybe_trigger_classifier(db, class_id)
     except Exception:
-        await db.rollback()
+        logger.exception("auto-trigger training check failed")

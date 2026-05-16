@@ -11,6 +11,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { DeleteFrameButton } from "@/components/DeleteFrameButton";
 import { useDeleteClip } from "@/hooks/useClips";
 import { useClip, useClipFrames, type Frame } from "@/hooks/useFrames";
 
@@ -126,6 +127,13 @@ function FrameGrid({ frames }: { frames: Frame[] }) {
           <div className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[10px] px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             {f.timestamp_sec.toFixed(1)}s
           </div>
+          <DeleteFrameButton
+            variant="icon"
+            frameId={f.id}
+            clipId={f.clip_id}
+            frameIndex={f.frame_index}
+            className="absolute right-1 top-1 h-7 w-7 bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 group-hover:opacity-100"
+          />
         </Link>
       ))}
     </div>

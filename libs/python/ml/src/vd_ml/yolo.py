@@ -64,13 +64,47 @@ def load_yolo(weights_path: str) -> Any:
     return YOLO(weights_path)
 
 
+def _predict_with_oom_retry(
+    model: Any, image_paths: list[Path], conf: float
+) -> list[Any]:
+    """Run YOLO inference, halving the batch and retrying on CUDA OOM.
+
+    A long-lived GPU worker can't afford to fail a whole clip because one
+    oversized batch exhausted VRAM. On `out of memory` we free the cache and
+    recurse on each half; a single image that still OOMs re-raises so the
+    caller's retry/alerting can take over.
+    """
+    if not image_paths:
+        return []
+    try:
+        return list(
+            model.predict(
+                source=[str(p) for p in image_paths], conf=conf, verbose=False
+            )
+        )
+    except RuntimeError as exc:  # torch.cuda.OutOfMemoryError subclasses this
+        if "out of memory" not in str(exc).lower() or len(image_paths) == 1:
+            raise
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        mid = len(image_paths) // 2
+        return _predict_with_oom_retry(model, image_paths[:mid], conf) + (
+            _predict_with_oom_retry(model, image_paths[mid:], conf)
+        )
+
+
 def predict_batch(model: Any, image_paths: list[Path], conf: float) -> list[list[Box]]:
     """Run YOLO on a batch of image files; return per-image lists of `Box`.
 
     The output list is aligned with `image_paths`. Degenerate (zero-area)
     boxes are dropped.
     """
-    results = model.predict(source=[str(p) for p in image_paths], conf=conf, verbose=False)
+    results = _predict_with_oom_retry(model, image_paths, conf)
     batch: list[list[Box]] = []
     for res in results:
         boxes: list[Box] = []

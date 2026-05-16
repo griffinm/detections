@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useFrame, type Detection, type FrameDetail } from "@/hooks/useFrame";
 import { useClasses, type VdClass } from "@/hooks/useClasses";
+import { DeleteFrameButton } from "@/components/DeleteFrameButton";
 
 const FALLBACK_COLOR = "#888888";
 
@@ -137,12 +138,20 @@ export function FrameDetailPage() {
           </h1>
         )}
         {frame != null && (
-          <button
-            onClick={() => navigate(`/labeling/${frame.id}`)}
-            className="ml-auto rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Label this frame
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <DeleteFrameButton
+              frameId={frame.id}
+              clipId={frame.clip_id}
+              frameIndex={frame.frame_index}
+              onDeleted={backToClip}
+            />
+            <button
+              onClick={() => navigate(`/labeling/${frame.id}`)}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Label this frame
+            </button>
+          </div>
         )}
       </div>
 

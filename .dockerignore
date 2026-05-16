@@ -1,0 +1,18 @@
+# Keep the build context small and — critically — keep host virtualenvs
+# (built for a different Python/OS) from being COPYed over the image's
+# uv-synced .venv.
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.nx
+data
+.env
+# Stray base weights — the worker downloads these to /data/models at runtime.
+apps/worker/yolo11l.pt

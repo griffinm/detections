@@ -19,24 +19,32 @@ describe("labeling undo/redo history", () => {
     expect(state.redoStack).toEqual([]);
   });
 
-  it("popUndo moves the newest entry onto the redo stack", () => {
+  it("peekUndo reads the newest entry without mutating", () => {
     useLabelingStore.getState().pushEdit(entry("a"));
     useLabelingStore.getState().pushEdit(entry("b"));
 
-    const popped = useLabelingStore.getState().popUndo();
-    expect(popped?.id).toBe("b");
+    expect(useLabelingStore.getState().peekUndo()?.id).toBe("b");
+    // Peek must not move anything — a failed undo stays re-runnable.
+    expect(ids(useLabelingStore.getState().undoStack)).toEqual(["a", "b"]);
+  });
+
+  it("commitUndo moves the newest entry onto the redo stack", () => {
+    useLabelingStore.getState().pushEdit(entry("a"));
+    useLabelingStore.getState().pushEdit(entry("b"));
+
+    useLabelingStore.getState().commitUndo();
 
     const state = useLabelingStore.getState();
     expect(ids(state.undoStack)).toEqual(["a"]);
     expect(ids(state.redoStack)).toEqual(["b"]);
   });
 
-  it("popRedo moves the entry back onto the undo stack", () => {
+  it("commitRedo moves the entry back onto the undo stack", () => {
     useLabelingStore.getState().pushEdit(entry("a"));
-    useLabelingStore.getState().popUndo();
+    useLabelingStore.getState().commitUndo();
 
-    const redone = useLabelingStore.getState().popRedo();
-    expect(redone?.id).toBe("a");
+    expect(useLabelingStore.getState().peekRedo()?.id).toBe("a");
+    useLabelingStore.getState().commitRedo();
 
     const state = useLabelingStore.getState();
     expect(ids(state.undoStack)).toEqual(["a"]);

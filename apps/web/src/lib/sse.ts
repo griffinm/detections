@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLabelingStore } from "@/stores/labeling";
 
 interface SseEvent {
   type: string;
@@ -41,12 +42,19 @@ export function useLiveEvents() {
             if (e.clip_id) void qc.invalidateQueries({ queryKey: ["clips", e.clip_id, "frames"] });
             if (e.frame_id) void qc.invalidateQueries({ queryKey: ["frames", e.frame_id] });
             break;
-          case "frame.updated":
+          case "frame.updated": {
             if (e.clip_id) void qc.invalidateQueries({ queryKey: ["clips", e.clip_id, "frames"] });
-            if (e.frame_id) void qc.invalidateQueries({ queryKey: ["frames", e.frame_id] });
+            // The frame open in the labeling UI is kept current by eager-save;
+            // refetching it here would clobber edits still in flight. Other
+            // frames still refresh so their review badges stay accurate.
+            const activeFrame = useLabelingStore.getState().activeFrameId;
+            if (e.frame_id && e.frame_id !== activeFrame) {
+              void qc.invalidateQueries({ queryKey: ["frames", e.frame_id] });
+            }
             void qc.invalidateQueries({ queryKey: ["labeling-queue"] });
             void qc.invalidateQueries({ queryKey: ["metrics"] });
             break;
+          }
           case "training_run.update":
             void qc.invalidateQueries({ queryKey: ["trainingRuns"] });
             if (e.training_run_id) {

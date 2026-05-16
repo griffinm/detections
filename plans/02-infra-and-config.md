@@ -21,8 +21,12 @@ Ubuntu 22.04 / 24.04 reference. Document in README:
 
 ## docker-compose services
 
-`docker/docker-compose.yml` (production-ish) + `docker-compose.override.yml`
-(dev overrides like exposed ports, bind-mounted source, debug logging).
+`docker/docker-compose.yml` is the single compose file. (An earlier
+`docker-compose.override.yml` was removed: the launch scripts pass an explicit
+`-f`, which disables compose's auto-merge of the override, so it was dead
+config. The container-network DB/broker URLs it carried now live in the base
+file's per-service `environment:` blocks, overriding the `localhost` defaults
+in `.env`.)
 
 ```yaml
 # docker/docker-compose.yml (abridged)
@@ -116,7 +120,13 @@ containerized.
 ```dockerfile
 # docker/worker/Dockerfile
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
+# Build-only: keep apt non-interactive (tzdata otherwise prompts for a timezone).
+ARG DEBIAN_FRONTEND=noninteractive
+# Ubuntu 22.04 ships Python 3.10; 3.12 comes from the deadsnakes PPA.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3-pip ffmpeg libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv
@@ -126,20 +136,27 @@ FROM base AS gpu
 # Copy lockfile + project metadata, then sync (cacheable layer)
 COPY apps/worker/pyproject.toml apps/worker/uv.lock /app/apps/worker/
 COPY libs/python /app/libs/python
-RUN cd /app/apps/worker && uv sync --frozen --no-dev
+RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra gpu
 COPY apps/worker /app/apps/worker
-ENV PYTHONPATH=/app/apps/worker
-CMD ["uv", "run", "celery", "-A", "worker.app", "worker"]
+# Put the venv on PATH so the compose `command:` can invoke `celery` directly.
+ENV PATH=/app/apps/worker/.venv/bin:$PATH
+ENV PYTHONPATH=/app/apps/worker/src
+CMD ["celery", "-A", "worker.app", "worker"]
 
 FROM base AS cpu
-# CPU image omits torch+cu* — uses cpu wheels via uv extras (`--extra cpu`)
+# CPU image uses cpu torch wheels via uv extras (`--extra cpu`)
 COPY apps/worker/pyproject.toml apps/worker/uv.lock /app/apps/worker/
 COPY libs/python /app/libs/python
 RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra cpu
 COPY apps/worker /app/apps/worker
-ENV PYTHONPATH=/app/apps/worker
-CMD ["uv", "run", "celery", "-A", "worker.app", "worker"]
+ENV PATH=/app/apps/worker/.venv/bin:$PATH
+ENV PYTHONPATH=/app/apps/worker/src
+CMD ["celery", "-A", "worker.app", "worker"]
 ```
+
+> A repo-root `.dockerignore` excludes `**/.venv` (and caches, `data/`, `.git`):
+> without it the `COPY apps/worker` line would overlay the host's virtualenv —
+> built for a different Python/OS — onto the image's freshly synced one.
 
 Notes:
 - The `gpu` worker handles `gpu` and `train` queues; the `cpu` worker handles
@@ -147,6 +164,17 @@ Notes:
   saturated by ffmpeg jobs.
 - ffmpeg is installed system-wide and called via subprocess. Frame extraction
   is CPU-bound; running it on the `cpu` worker keeps GPU free for inference.
+- The `gpu`/`cpu` distinction is real, not just an image tag: generic PyPI
+  `torch` ships no CUDA kernels. `apps/worker/pyproject.toml` pins `torch`
+  (and `torchvision`) to `download.pytorch.org/whl/cu124` under the `gpu`
+  extra and `/whl/cpu` under the `cpu` extra, via `[[tool.uv.index]]` +
+  `[tool.uv.sources]`. The two extras are declared `conflicts` so uv can
+  resolve each split. `uv.lock` must be regenerated (`uv lock`) on any change
+  to these — the Dockerfiles `COPY uv.lock` and run `uv sync --frozen`.
+- `insightface` (0.7.3, the only release) publishes just an sdist with a
+  Cython/C++ extension built at install time, so the `gpu` Docker stage
+  installs `build-essential` + `python3.12-dev`, runs `uv sync`, then purges
+  the toolchain in the same layer. The `cpu` stage needs none of this.
 
 ## Folder layout (bind-mounted)
 

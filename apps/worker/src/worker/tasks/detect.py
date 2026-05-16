@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import select, update
 
 from vd_db import load_effective_settings
 from vd_db.models import Class, Clip, DetectionAudit, DetectionModel, Frame, Subclass
@@ -103,19 +103,24 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
                 frame.kept = False
         await session.commit()
 
-        # Mark clips whose frames are all detected as done.
+        # Mark clips whose frames are all detected as done. A single
+        # conditional UPDATE keeps this correct when batches for one clip run
+        # concurrently: the `status == 'detecting'` guard means exactly one
+        # batch flips the clip, and rowcount tells us which — a read-then-write
+        # check would let two batches both see zero pending and double-fire.
         finished: list[uuid.UUID] = []
         for clip_id in clip_ids:
-            remaining = await session.scalar(
-                select(func.count())
-                .select_from(Frame)
+            still_pending = (
+                select(Frame.id)
                 .where(Frame.clip_id == clip_id, Frame.detect_status == "pending")
+                .exists()
             )
-            if remaining:
-                continue
-            clip = await session.get(Clip, clip_id)
-            if clip is not None and clip.status == "detecting":
-                clip.status = "done"
+            result = await session.execute(
+                update(Clip)
+                .where(Clip.id == clip_id, Clip.status == "detecting", ~still_pending)
+                .values(status="done")
+            )
+            if result.rowcount == 1:
                 finished.append(clip_id)
         await session.commit()
 

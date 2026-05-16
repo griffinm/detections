@@ -1,5 +1,18 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { type Clip, useClipsList } from "@/hooks/useClips";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { type Clip, useClipsList, useDeleteClip } from "@/hooks/useClips";
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-muted text-muted-foreground",
@@ -32,6 +45,54 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+function DeleteClipButton({ clip }: { clip: Clip }) {
+  const del = useDeleteClip();
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Delete ${clip.filename}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Trash2 className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>Delete clip?</DialogTitle>
+          <DialogDescription>
+            “{clip.filename}” and all of its frames and detections will be
+            permanently removed. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={del.isPending}
+            onClick={() =>
+              del.mutate(clip.id, {
+                onSuccess: () => {
+                  toast.success("Clip deletion queued");
+                  setOpen(false);
+                },
+                onError: () => toast.error("Failed to delete clip"),
+              })
+            }
+          >
+            Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
   const ingestedAt = clip.ingested_at
     ? new Date(clip.ingested_at).toLocaleString()
@@ -49,6 +110,9 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
       <td className="px-4 py-3 text-sm text-muted-foreground">{formatDuration(clip.duration_sec)}</td>
       <td className="px-4 py-3 text-sm text-muted-foreground">{formatBytes(clip.size_bytes)}</td>
       <td className="px-4 py-3 text-sm text-muted-foreground">{ingestedAt}</td>
+      <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+        <DeleteClipButton clip={clip} />
+      </td>
     </tr>
   );
 }
@@ -56,7 +120,7 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
 function SkeletonRow() {
   return (
     <tr className="border-b border-border">
-      {[...Array(5)].map((_, i) => (
+      {[...Array(6)].map((_, i) => (
         <td key={i} className="px-4 py-3">
           <div className="h-4 bg-muted rounded animate-pulse" />
         </td>
@@ -93,13 +157,14 @@ export function ClipsList() {
               <th className="px-4 py-3">Duration</th>
               <th className="px-4 py-3">Size</th>
               <th className="px-4 py-3">Ingested</th>
+              <th className="px-4 py-3 w-12" aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
             {isPending && [...Array(5)].map((_, i) => <SkeletonRow key={i} />)}
             {data?.items.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                <td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">
                   No clips yet. Drop a video into <code className="font-mono">inbox/</code> to get started.
                 </td>
               </tr>

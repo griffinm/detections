@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ClipDetail } from "./useClips";
 
 export interface Frame {
@@ -37,5 +37,19 @@ export function useClipFrames(id: string) {
     },
     enabled: Boolean(id),
     staleTime: 30_000,
+  });
+}
+
+export function useDeleteFrame() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string; clipId: string }): Promise<void> => {
+      const res = await fetch(`/api/frames/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete frame");
+    },
+    onSuccess: (_data, { clipId }) => {
+      void qc.invalidateQueries({ queryKey: ["clips", clipId, "frames"] });
+      void qc.invalidateQueries({ queryKey: ["clips", clipId] });
+    },
   });
 }

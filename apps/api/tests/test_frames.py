@@ -2,6 +2,8 @@
 
 import uuid
 
+from sqlalchemy import func, select
+
 from vd_db.models import Clip, DetectionModel, Frame
 
 
@@ -48,4 +50,25 @@ async def test_get_frame_includes_detections(client, session):  # type: ignore[n
 
 async def test_get_frame_missing_returns_404(client):  # type: ignore[no-untyped-def]
     resp = await client.get(f"/api/frames/{uuid.uuid4()}")
+    assert resp.status_code == 404
+
+
+async def test_delete_frame_cascades_detections(client, session):  # type: ignore[no-untyped-def]
+    frame = await _seed_frame(session)
+
+    resp = await client.delete(f"/api/frames/{frame.id}")
+    assert resp.status_code == 204
+
+    session.expunge_all()  # drop identity-map cache so the get re-queries
+    assert await session.get(Frame, frame.id) is None
+    remaining = await session.scalar(
+        select(func.count())
+        .select_from(DetectionModel)
+        .where(DetectionModel.frame_id == frame.id)
+    )
+    assert remaining == 0
+
+
+async def test_delete_missing_frame_returns_404(client):  # type: ignore[no-untyped-def]
+    resp = await client.delete(f"/api/frames/{uuid.uuid4()}")
     assert resp.status_code == 404

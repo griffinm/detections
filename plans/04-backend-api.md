@@ -118,6 +118,8 @@ All paths prefixed with `/api`. Pagination is cursor-based (`?cursor=…&limit=�
 ### Frames
 - `GET /clips/{id}/frames?kept=true` — paginated.
 - `GET /frames/{id}` — detail incl. detections (soft-deleted ones excluded).
+- `DELETE /frames/{id}` — hard-delete a frame: its JPEG, its row, and (via
+  `ondelete=CASCADE`) its detections + audit rows. Synchronous, returns 204.
 - `POST /frames/{id}/review` — mark every unreviewed detection on the frame
   reviewed (the labeling UI's "Save"); writes `user_review` audits. *(Phase 3)*
 - `GET /frames/{id}/image` — redirects to `/files/frames/<clip>/<frame>.jpg`.

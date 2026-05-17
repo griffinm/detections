@@ -127,7 +127,9 @@ containerized.
 
 ```dockerfile
 # docker/worker/Dockerfile
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
+# CUDA 12.8: the worker GPU is Blackwell (sm_120); 12.4 torch wheels carry no
+# kernels for that arch and abort at inference with "no kernel image".
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 AS base
 # Build-only: keep apt non-interactive (tzdata otherwise prompts for a timezone).
 ARG DEBIAN_FRONTEND=noninteractive
 # Ubuntu 22.04 ships Python 3.10; 3.12 comes from the deadsnakes PPA.
@@ -141,22 +143,33 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 
 FROM base AS gpu
-# Copy lockfile + project metadata, then sync (cacheable layer)
+# Two-phase sync: install heavy third-party deps from manifests only, then
+# editable-link the local libs after their source is copied. See "build
+# cache" note below.
 COPY apps/worker/pyproject.toml apps/worker/uv.lock /app/apps/worker/
+COPY libs/python/*/pyproject.toml /app/libs/python/<lib>/   # manifests only
+RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra gpu \
+    --no-install-package vd-settings --no-install-package vd-db \
+    --no-install-package vd-tasks --no-install-package vd-ml
 COPY libs/python /app/libs/python
-RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra gpu
 COPY apps/worker /app/apps/worker
+RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra gpu
 # Put the venv on PATH so the compose `command:` can invoke `celery` directly.
 ENV PATH=/app/apps/worker/.venv/bin:$PATH
 ENV PYTHONPATH=/app/apps/worker/src
 CMD ["celery", "-A", "worker.app", "worker"]
 
 FROM base AS cpu
-# CPU image uses cpu torch wheels via uv extras (`--extra cpu`)
+# CPU image uses cpu torch wheels via uv extras (`--extra cpu`); same
+# two-phase sync as gpu.
 COPY apps/worker/pyproject.toml apps/worker/uv.lock /app/apps/worker/
+COPY libs/python/*/pyproject.toml /app/libs/python/<lib>/
+RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra cpu \
+    --no-install-package vd-settings --no-install-package vd-db \
+    --no-install-package vd-tasks --no-install-package vd-ml
 COPY libs/python /app/libs/python
-RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra cpu
 COPY apps/worker /app/apps/worker
+RUN cd /app/apps/worker && uv sync --frozen --no-dev --extra cpu
 ENV PATH=/app/apps/worker/.venv/bin:$PATH
 ENV PYTHONPATH=/app/apps/worker/src
 CMD ["celery", "-A", "worker.app", "worker"]
@@ -174,15 +187,29 @@ Notes:
   is CPU-bound; running it on the `cpu` worker keeps GPU free for inference.
 - The `gpu`/`cpu` distinction is real, not just an image tag: generic PyPI
   `torch` ships no CUDA kernels. `apps/worker/pyproject.toml` pins `torch`
-  (and `torchvision`) to `download.pytorch.org/whl/cu124` under the `gpu`
+  (and `torchvision`) to `download.pytorch.org/whl/cu128` under the `gpu`
   extra and `/whl/cpu` under the `cpu` extra, via `[[tool.uv.index]]` +
   `[tool.uv.sources]`. The two extras are declared `conflicts` so uv can
   resolve each split. `uv.lock` must be regenerated (`uv lock`) on any change
   to these — the Dockerfiles `COPY uv.lock` and run `uv sync --frozen`.
+  **cu128, not cu124:** the worker GPU is Blackwell-class (compute capability
+  `sm_120`); the cu124 wheels (torch ≤2.6) contain no `sm_120` kernels and
+  fail at the first GPU op with `CUDA error: no kernel image is available`.
+  cu128 + `torch>=2.7` is the floor for Blackwell. Keep the CUDA base image
+  tag (above) in step with the wheel index.
 - `insightface` (0.7.3, the only release) publishes just an sdist with a
   Cython/C++ extension built at install time, so the `gpu` Docker stage
   installs `build-essential` + `python3.12-dev`, runs `uv sync`, then purges
   the toolchain in the same layer. The `cpu` stage needs none of this.
+- **Build cache:** the local libs (`vd-settings`, `vd-db`, `vd-tasks`,
+  `vd-ml`) are editable path deps. Copying their full source *before*
+  `uv sync` would invalidate the heavy third-party install layer on every
+  lib edit, forcing a full reinstall of torch/ultralytics/insightface — felt
+  as a slow `npm run gpu` (which rebuilds via `--build`). So each stage syncs
+  in two phases: first install third-party deps from the lib *manifests*
+  only (`--no-install-package` skips the local libs, whose source isn't
+  present yet); then `COPY libs/python` and run `uv sync` again to
+  editable-link them. Only the cheap second sync is invalidated by lib edits.
 
 ## Folder layout (bind-mounted)
 

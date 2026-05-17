@@ -114,6 +114,16 @@ async def test_detect_persists_prunes_and_completes(session, frames_dir, capture
     assert ("clip.done", {"clip_id": str(clip.id)}) in capture_io.events
 
 
+async def test_detect_raises_when_frame_jpeg_missing(session, frames_dir, capture_io):  # type: ignore[no-untyped-def]
+    """A pending frame with no file on disk is a fault, not an empty frame."""
+    _, frames = await _seed(session, frames_dir, n_frames=2)
+    capture_io.set_boxes({})
+    (frames_dir / frames[0].path).unlink()  # simulate a lost/misplaced frame file
+
+    with pytest.raises(RuntimeError, match="JPEG missing"):
+        await _detect_frame_batch_async([str(f.id) for f in frames])
+
+
 async def test_detect_is_idempotent(session, frames_dir, capture_io):  # type: ignore[no-untyped-def]
     _, frames = await _seed(session, frames_dir, n_frames=1)
     capture_io.set_boxes(

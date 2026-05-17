@@ -54,21 +54,26 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
             )
         )
 
-        # Resolve on-disk JPEGs; a frame whose file is gone is treated as empty.
-        loadable: list[Frame] = []
+        # Every pending frame must have its JPEG on disk: extract writes it
+        # before scheduling detection, and pruning only runs once detection
+        # has marked the frame done. A missing file is therefore a real fault
+        # — a misconfigured frames_dir, an unmounted volume — so fail loudly
+        # and let the task retry, rather than silently recording the frame as
+        # object-free (which would then prune it, destroying the source frame).
         paths: list[Path] = []
         for frame in frames:
             if frame.path is None:
-                continue
+                raise RuntimeError(f"frame {frame.id} has no stored path")
             file_path = settings.frames_dir / frame.path
-            if file_path.exists():
-                loadable.append(frame)
-                paths.append(file_path)
+            if not file_path.exists():
+                raise RuntimeError(
+                    f"frame {frame.id} JPEG missing at {file_path} — check "
+                    "VD_FRAMES_DIR and the frames volume mount"
+                )
+            paths.append(file_path)
 
-        results = (
-            predict_batch(model, paths, settings.detection_min_confidence) if paths else []
-        )
-        per_frame = dict(zip(loadable, results, strict=True))
+        results = predict_batch(model, paths, settings.detection_min_confidence)
+        per_frame = dict(zip(frames, results, strict=True))
 
         clip_ids: set[uuid.UUID] = set()
         new_detections: list[DetectionModel] = []

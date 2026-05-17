@@ -32,11 +32,20 @@ services:
       dockerfile: docker/worker/Dockerfile
       target: cpu
     env_file: ../.env
-    # Override the .env host URLs: inside the compose network the database
-    # and broker are reached by container name, not localhost.
+    # Override the .env host values: inside the compose network the DB and
+    # broker are reached by container name (not localhost), and the data
+    # directories live at the container mount points (not the host abs paths
+    # the .env carries for host-run dev processes). Without the *_DIR
+    # overrides, extract writes frames the gpu worker resolves to a
+    # non-existent path and silently records as object-free.
     environment:
       VD_DATABASE_URL: postgresql+asyncpg://vd:vd@postgres:5432/video_detection
       VD_REDIS_URL: redis://redis:6379/0
+      VD_INBOX_DIR: /data/videos/inbox
+      VD_PROCESSED_DIR: /data/videos/processed
+      VD_FAILED_DIR: /data/videos/failed
+      VD_FRAMES_DIR: /data/frames
+      VD_MODELS_DIR: /data/models
     volumes:
       - ../data/videos:/data/videos
       - ../data/frames:/data/frames
@@ -54,9 +63,15 @@ services:
       dockerfile: docker/worker/Dockerfile
       target: gpu
     env_file: ../.env
+    # See worker-cpu: the *_DIR overrides are mandatory, not cosmetic.
     environment:
       VD_DATABASE_URL: postgresql+asyncpg://vd:vd@postgres:5432/video_detection
       VD_REDIS_URL: redis://redis:6379/0
+      VD_INBOX_DIR: /data/videos/inbox
+      VD_PROCESSED_DIR: /data/videos/processed
+      VD_FAILED_DIR: /data/videos/failed
+      VD_FRAMES_DIR: /data/frames
+      VD_MODELS_DIR: /data/models
     runtime: nvidia
     deploy:
       resources:

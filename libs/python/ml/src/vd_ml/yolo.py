@@ -64,8 +64,35 @@ def load_yolo(weights_path: str) -> Any:
     return YOLO(weights_path)
 
 
+def _require_cuda_device(device: int | str) -> int | str:
+    """Return `device`, raising if a CUDA device was requested but is absent.
+
+    The `gpu` queue is sized around the single GPU. Ultralytics silently falls
+    back to CPU when CUDA is missing — inference still "works" but at ~10× the
+    latency, quietly starving the pipeline. We'd rather fail loudly: a missing
+    GPU is a deployment fault, not something to paper over. Pass `device="cpu"`
+    to opt out (tests, CPU-only contexts).
+    """
+    if device == "cpu":
+        return device
+    try:
+        import torch
+
+        cuda_available = torch.cuda.is_available()
+    except ImportError:  # torch absent ⇒ definitely no GPU
+        cuda_available = False
+    if not cuda_available:
+        raise RuntimeError(
+            f"YOLO inference requested CUDA device {device!r} but no GPU is "
+            "visible (torch missing or torch.cuda.is_available() is False) — "
+            "the gpu worker has no usable GPU. Run `python -m worker.gpu_check` "
+            'to diagnose, or pass device="cpu" to run on CPU intentionally.'
+        )
+    return device
+
+
 def _predict_with_oom_retry(
-    model: Any, image_paths: list[Path], conf: float
+    model: Any, image_paths: list[Path], conf: float, device: int | str
 ) -> list[Any]:
     """Run YOLO inference, halving the batch and retrying on CUDA OOM.
 
@@ -79,7 +106,10 @@ def _predict_with_oom_retry(
     try:
         return list(
             model.predict(
-                source=[str(p) for p in image_paths], conf=conf, verbose=False
+                source=[str(p) for p in image_paths],
+                conf=conf,
+                device=device,
+                verbose=False,
             )
         )
     except RuntimeError as exc:  # torch.cuda.OutOfMemoryError subclasses this
@@ -93,18 +123,24 @@ def _predict_with_oom_retry(
         except ImportError:
             pass
         mid = len(image_paths) // 2
-        return _predict_with_oom_retry(model, image_paths[:mid], conf) + (
-            _predict_with_oom_retry(model, image_paths[mid:], conf)
+        return _predict_with_oom_retry(model, image_paths[:mid], conf, device) + (
+            _predict_with_oom_retry(model, image_paths[mid:], conf, device)
         )
 
 
-def predict_batch(model: Any, image_paths: list[Path], conf: float) -> list[list[Box]]:
+def predict_batch(
+    model: Any, image_paths: list[Path], conf: float, device: int | str = 0
+) -> list[list[Box]]:
     """Run YOLO on a batch of image files; return per-image lists of `Box`.
 
     The output list is aligned with `image_paths`. Degenerate (zero-area)
-    boxes are dropped.
+    boxes are dropped. `device` is pinned to CUDA 0 by default and a missing
+    GPU raises rather than silently falling back to CPU — see
+    `_require_cuda_device`.
     """
-    results = _predict_with_oom_retry(model, image_paths, conf)
+    results = _predict_with_oom_retry(
+        model, image_paths, conf, _require_cuda_device(device)
+    )
     batch: list[list[Box]] = []
     for res in results:
         boxes: list[Box] = []

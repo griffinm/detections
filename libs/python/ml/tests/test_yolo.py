@@ -6,6 +6,8 @@ These exercise `vd_ml.yolo` without importing ultralytics — `load_yolo` and
 
 from pathlib import Path
 
+import pytest
+
 from vd_ml import Box, predict_batch, to_normalized_bbox
 
 
@@ -59,7 +61,9 @@ class _FakeModel:
     def __init__(self, results: list[_FakeResult]) -> None:
         self._results = results
 
-    def predict(self, source: object, conf: float, verbose: bool) -> list[_FakeResult]:
+    def predict(
+        self, source: object, conf: float, device: int | str, verbose: bool
+    ) -> list[_FakeResult]:
         return self._results
 
 
@@ -78,7 +82,7 @@ def test_predict_batch_extracts_boxes_and_drops_degenerate() -> None:
     ]
     # Two paths to match the two fake results (the model ignores `source`).
     batch = predict_batch(
-        _FakeModel(results), [Path("a.jpg"), Path("b.jpg")], conf=0.25
+        _FakeModel(results), [Path("a.jpg"), Path("b.jpg")], conf=0.25, device="cpu"
     )
 
     assert len(batch) == 2
@@ -93,7 +97,7 @@ class _OomModel:
         self._max_batch = max_batch
 
     def predict(
-        self, source: list[str], conf: float, verbose: bool
+        self, source: list[str], conf: float, device: int | str, verbose: bool
     ) -> list[_FakeResult]:
         if len(source) > self._max_batch:
             raise RuntimeError("CUDA error: out of memory")
@@ -103,6 +107,23 @@ class _OomModel:
 def test_predict_batch_splits_on_cuda_oom() -> None:
     # Batch of 4 OOMs until halved to 1; output stays aligned with the input.
     batch = predict_batch(
-        _OomModel(max_batch=1), [Path(f"{i}.jpg") for i in range(4)], conf=0.25
+        _OomModel(max_batch=1),
+        [Path(f"{i}.jpg") for i in range(4)],
+        conf=0.25,
+        device="cpu",
     )
     assert batch == [[], [], [], []]
+
+
+def test_predict_batch_raises_when_cuda_device_unavailable() -> None:
+    """The default CUDA device fails loudly rather than degrading to CPU."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            pytest.skip("CUDA is present; cannot exercise the missing-GPU path")
+    except ImportError:
+        pass  # torch absent ⇒ no GPU, which is exactly the path under test
+
+    with pytest.raises(RuntimeError, match="no GPU is visible"):
+        predict_batch(_FakeModel([]), [Path("a.jpg")], conf=0.25)

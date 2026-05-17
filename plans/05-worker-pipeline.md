@@ -66,7 +66,10 @@ Idempotency: the upsert + a per-frame status make this safely re-runnable.
 ### `vd.detect_frame_batch(frame_ids: list[uuid])`
 - Load active YOLO model (process-level singleton; loaded once at worker boot).
 - Read frame JPEGs from disk (parallel).
-- Run YOLO `model.predict(images, conf=detection_min_confidence)`.
+- Run YOLO `model.predict(images, conf=detection_min_confidence, device=0)`.
+  The device is pinned to CUDA 0: `vd_ml.predict_batch` rejects a missing GPU
+  with a `RuntimeError` rather than letting Ultralytics fall back to CPU at
+  ~10× the latency.
 - For each frame:
   - If zero detections → set `frames.kept=false`, schedule
     `vd.prune_frame(frame_id)` on `cpu` (which deletes the file iff

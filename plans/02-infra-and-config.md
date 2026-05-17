@@ -28,6 +28,14 @@ config. The container-network DB/broker URLs it carried now live in the base
 file's per-service `environment:` blocks, overriding the `localhost` defaults
 in `.env`.)
 
+The same `environment:` blocks **must** also override every `VD_*_DIR` path.
+`.env` is shared with host-run dev processes, so it carries host-absolute
+paths (`/home/.../data/frames`); inside the containers those directories are
+bind-mounted at `/data/...`. A worker that inherits the host path resolves
+frames/models to a non-existent directory — and `vd.detect_frame_batch`
+silently treats a missing JPEG as an object-free frame, so the mismatch
+surfaces as clips that "process" with zero detections, not as an error.
+
 ```yaml
 # docker/docker-compose.yml (abridged)
 services:

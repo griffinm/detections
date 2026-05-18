@@ -74,13 +74,20 @@ SELECTED ──(Esc / click empty)──> IDLE
 `B` is the "Box" hotkey; we deliberately don't make plain drag-on-empty
 start a new box (too easy to do by accident when panning).
 
+On frame load the first detection is auto-selected (state starts in
+`SELECTED`, not `IDLE`) so `↑`/`↓` and class hotkeys work without a
+priming click. Selection is seeded once per frame and survives eager-save
+cache updates.
+
 ## Hotkeys
 
 | Key             | Action                                                  |
 |-----------------|---------------------------------------------------------|
 | `J` / `K`       | Next / previous frame (within current clip OR queue)    |
+| `↑` / `↓`       | Cycle selection through detections in the frame (wraps) |
 | `Space`         | Mark all detections on this frame "accepted as-is"      |
 | `Enter`         | Save current frame (= mark all selected dets reviewed)  |
+| `Shift+Enter`   | Save current frame, then advance to the next queued frame |
 | `B`             | Hold + drag to draw a new box                           |
 | `1`–`9`         | Assign top-level class by index (visible in right rail) |
 | `Shift+1`–`9`   | Assign sub-class within currently selected class        |
@@ -126,7 +133,9 @@ Right rail is a flat-but-grouped tree:
 We save eagerly (per change) using PATCH, not on a "save" button. The
 "Save" button means "mark all currently-displayed unreviewed detections
 as `reviewed=true`" — i.e., it asserts user agreement with everything on
-screen. This is the most common path.
+screen. This is the most common path. **Save & Next** (`Shift+Enter`, the
+primary topbar button) does the same review then advances to the next queued
+frame, so a confirmed frame is one click/keystroke.
 
 Conflict resolution: single-user app → optimistic, no conflict.
 
@@ -187,6 +196,10 @@ When a user promotes a detection to an example, we:
 - A small chip on the selected detection shows "original → current state"
   (e.g. "person → Mallory"), drawn just above the box; it collapses to a
   single label when the prediction and the current assignment agree.
+- A magnified crop of the selected detection (`DetectionCrop`) is shown
+  directly under the canvas — a fixed-height, width-capped box that scales
+  the frame JPEG so just the detection's region fills it, so small boxes
+  stay reviewable without zooming the whole frame.
 
 ## Accessibility
 

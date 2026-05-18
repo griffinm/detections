@@ -9,6 +9,20 @@ tick the relevant plan doc.
 
 ## Worker / ML
 
+- **CPU worker image can't be lean** — `docker/worker/Dockerfile`'s `cpu`
+  target installs only `torch` (no `vd-ml`), but `worker/tasks/__init__.py`
+  imports *every* task module eagerly, and the GPU task modules pull
+  `vd_ml` (→ ultralytics, insightface, transformers, sklearn) at import time.
+  So the lean `cpu` image crashes on startup with `ModuleNotFoundError:
+  vd_ml`. *Current workaround:* the server deploy builds `vd-worker-cpu` from
+  the `gpu` target (see `docker/server-compose.yml`) — queue isolation is kept
+  (`-Q cpu`, no GPU device) but the image is heavy. *Proper fix:* make the
+  GPU task modules defer their `from worker.models import …` / `from vd_ml
+  import …` into the task bodies (and/or lazy `vd_ml/__init__.py`), so the
+  `cpu` image can drop the ML stack. *Where:* `apps/worker/src/worker/tasks/*`,
+  `apps/worker/src/worker/models.py`, `libs/python/ml/src/vd_ml/__init__.py`.
+  (plan 02/05)
+
 - **`vd.backfill_detections`** — re-run detection over historical kept frames
   against a newly activated model (incl. an `auto_backfill_on_new_model`
   setting / a "reprocess" button). *Why:* Phase 5 scoped to forward-only — new
@@ -51,6 +65,18 @@ tick the relevant plan doc.
   but not the fitter. *Where:* fit on reviewed scores, store as a
   `model_versions` row (`kind='classifier'`, `target_class_id=NULL`), apply as
   a post-processing step in `detect_frame_batch`. (plan 06)
+
+- **Detector precision/recall metrics (false-positive rate)** — `/metrics`
+  measures *classification* accuracy over reviewed, non-deleted, model-produced
+  detections (`predicted_* == current_*`). A false positive handled by deleting
+  the detection sets `deleted_at`, which drops it from every metrics filter — so
+  spurious detections never register as the model "getting it wrong", and the
+  detector's precision is invisible. *Needs:* count `user_delete` audits (or
+  deleted model-produced detections) as false positives, and missed objects
+  (user-drawn `source='user'` boxes) as false negatives, to derive detector
+  precision/recall alongside the existing classification accuracy. *Where:*
+  `apps/api/src/api/routers/metrics.py`; the signal already exists in
+  `detection_audits` + `detections.deleted_at`/`source`. (plan 06)
 
 - **`GET /api/system/queue`** endpoint — Celery queue depths via `inspect`, and
   a **`vd.heartbeat`** periodic task writing worker liveness to Redis. *Why:*

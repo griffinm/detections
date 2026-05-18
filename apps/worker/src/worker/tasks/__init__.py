@@ -1,6 +1,7 @@
 from . import (
     assign_subclass,
     backfill_embeddings,
+    dedup,
     delete_clip,
     detect,
     embed_object,
@@ -15,6 +16,7 @@ from . import (
 __all__ = [
     "assign_subclass",
     "backfill_embeddings",
+    "dedup",
     "delete_clip",
     "detect",
     "embed_object",

@@ -8,8 +8,11 @@ interface Options {
   actions: ReturnType<typeof useDetectionActions>;
   classes: VdClass[];
   subclasses: VdSubclass[];
+  /** Detection ids in render order — for ↑/↓ cycling. */
+  detectionIds: string[];
   onPrev: () => void;
   onNext: () => void;
+  onSaveNext: () => void;
   onToggleKeymap: () => void;
 }
 
@@ -18,8 +21,10 @@ export function useLabelingHotkeys({
   actions,
   classes,
   subclasses,
+  detectionIds,
   onPrev,
   onNext,
+  onSaveNext,
   onToggleKeymap,
 }: Options): void {
   useEffect(() => {
@@ -94,10 +99,26 @@ export function useLabelingHotkeys({
         case "k":
           onPrev();
           break;
+        case "arrowdown":
+        case "arrowup": {
+          if (detectionIds.length === 0) break;
+          e.preventDefault();
+          const delta = lower === "arrowdown" ? 1 : -1;
+          const cur = selected ? detectionIds.indexOf(selected) : -1;
+          const next =
+            cur < 0
+              ? delta > 0
+                ? 0
+                : detectionIds.length - 1
+              : (cur + delta + detectionIds.length) % detectionIds.length;
+          store.select(detectionIds[next]);
+          break;
+        }
         case "enter":
         case " ":
           e.preventDefault();
-          void actions.reviewFrame();
+          if (e.shiftKey) onSaveNext();
+          else void actions.reviewFrame();
           break;
         case "escape":
           store.setMode("idle");
@@ -111,5 +132,14 @@ export function useLabelingHotkeys({
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [actions, classes, subclasses, onPrev, onNext, onToggleKeymap]);
+  }, [
+    actions,
+    classes,
+    subclasses,
+    detectionIds,
+    onPrev,
+    onNext,
+    onSaveNext,
+    onToggleKeymap,
+  ]);
 }

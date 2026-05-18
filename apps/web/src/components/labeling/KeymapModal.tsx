@@ -7,12 +7,14 @@ import {
 
 const SHORTCUTS: [string, string][] = [
   ["J / K", "Next / previous frame in queue"],
+  ["↑ / ↓", "Cycle selection through detections in the frame"],
   ["B", "Toggle draw-box mode"],
   ["1 – 9", "Assign class (or set default)"],
   ["⇧ 1 – 9", "Assign sub-class within the selected class"],
   ["S", "Promote selected detection to a sub-class example"],
   ["X / Delete", "Delete selected detection"],
   ["Enter / Space", "Save — mark frame reviewed"],
+  ["⇧ Enter", "Save & advance to the next queued frame"],
   ["Esc", "Deselect / cancel draw"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["?", "Show this help"],

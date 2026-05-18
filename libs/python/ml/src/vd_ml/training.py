@@ -64,6 +64,10 @@ def train_yolo(
         name=run_name,
         exist_ok=True,
         verbose=False,
+        # The caller is a Celery prefork worker, whose processes are daemonic
+        # and so cannot spawn children. workers>0 would have the DataLoader
+        # fork worker processes and crash; load in-process instead.
+        workers=0,
     )
     summary: dict[str, float] = dict(getattr(results, "results_dict", {}) or {})
     best = Path(results.save_dir) / "weights" / "best.pt"

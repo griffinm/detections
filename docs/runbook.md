@@ -72,6 +72,22 @@ tar czf backup/data-$(date +%F).tar.gz data/
 Run nightly from cron. Restore: `gunzip -c db-*.sql.gz | psql` into a fresh
 database, then untar `data/`.
 
+## Deploying
+
+The app runs on the `layla` server with no CI/registry — images are built on
+the host. Redeploy with:
+
+```bash
+./tools/scripts/deploy.sh
+```
+
+This rsyncs the repo source to `layla:/home/griffin/video-detections`,
+installs `docker/server-compose.yml` as `~/docker/compose/video-detections.yml`,
+then rebuilds and `up -d`. The `vd-api` container runs `alembic upgrade head`
+on start, so migrations need no manual step. `data/` is excluded from the
+rsync — it is bind-mounted server state. See `plans/02-infra-and-config.md`
+(§Production deployment).
+
 ## Monitoring
 
 - **Metrics page** (`/metrics`) — class accuracy over time, per-class

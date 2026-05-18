@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ClassPicker } from "@/components/labeling/ClassPicker";
+import { DetectionCrop } from "@/components/labeling/DetectionCrop";
 import { DetectionList } from "@/components/labeling/DetectionList";
 import { KeymapModal } from "@/components/labeling/KeymapModal";
 import { LabelingCanvas } from "@/components/labeling/LabelingCanvas";
@@ -36,6 +37,17 @@ export function LabelingFrame() {
     return () => setActiveFrame(null);
   }, [fid, resetFrame, setActiveFrame]);
 
+  // Select the first detection once per frame load. Keyed on fid (not `frame`)
+  // so eager-save cache updates don't yank selection back to the top.
+  const initializedFid = useRef<string | null>(null);
+  useEffect(() => {
+    if (!frame || initializedFid.current === fid) return;
+    initializedFid.current = fid;
+    if (frame.detections.length > 0) {
+      useLabelingStore.getState().select(frame.detections[0].id);
+    }
+  }, [fid, frame]);
+
   const queueIndex = queueIds.indexOf(fid);
 
   // Warm the next queued frame so J-navigation lands instantly.
@@ -59,14 +71,25 @@ export function LabelingFrame() {
   );
   const onPrev = useCallback(() => goTo(queueIndex - 1), [goTo, queueIndex]);
   const onNext = useCallback(() => goTo(queueIndex + 1), [goTo, queueIndex]);
+  const onSaveNext = useCallback(async () => {
+    await actions.reviewFrame();
+    onNext();
+  }, [actions, onNext]);
   const onToggleKeymap = useCallback(() => setKeymapOpen((v) => !v), []);
+
+  const detectionIds = useMemo(
+    () => frame?.detections.map((d) => d.id) ?? [],
+    [frame],
+  );
 
   useLabelingHotkeys({
     actions,
     classes,
     subclasses,
+    detectionIds,
     onPrev,
     onNext,
+    onSaveNext,
     onToggleKeymap,
   });
 
@@ -100,7 +123,14 @@ export function LabelingFrame() {
           {hasQueue && ` · ${queueIndex + 1}/${queueIds.length}`}
         </span>
         <div className="ml-auto flex gap-2">
-          <Button size="sm" onClick={() => void actions.reviewFrame()}>
+          <Button size="sm" onClick={() => void onSaveNext()}>
+            Save &amp; Next
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void actions.reviewFrame()}
+          >
             Save
           </Button>
           <Button
@@ -138,6 +168,7 @@ export function LabelingFrame() {
             subclasses={subclasses}
             actions={actions}
           />
+          <DetectionCrop frame={frame} />
         </main>
         <aside className="w-52 shrink-0 overflow-y-auto">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

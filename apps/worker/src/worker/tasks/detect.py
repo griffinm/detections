@@ -149,6 +149,9 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
     for clip_id in finished:
         await publish("clip.status", clip_id=str(clip_id), status="done")
         await publish("clip.done", clip_id=str(clip_id))
+        # Off the critical path: collapse near-duplicate frames now that every
+        # frame of the clip has its detections. The clip is already `done`.
+        celery_app.send_task("vd.dedup_clip_frames", args=[str(clip_id)], queue="cpu")
     return len(frames)
 
 

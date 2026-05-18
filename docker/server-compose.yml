@@ -1,0 +1,128 @@
+# Production compose for the `layla` server. Installed as
+# ~/docker/compose/video-detections.yml and pulled in by ~/docker/docker-compose.yml.
+#
+# Unlike docker/docker-compose.yml (local dev), this file runs NO postgres or
+# redis of its own — it reuses the shared `infra.yml` services on the `prod`
+# network. Postgres there must be the pgvector image.
+#
+# Build context is the repo source rsynced to /home/griffin/video-detections.
+
+x-vd-env: &vd-env
+  VD_DATABASE_URL: postgresql+asyncpg://video_detection_user:${VIDEO_DETECTION_DB_PASSWORD}@postgres:5432/video_detection
+  VD_REDIS_URL: redis://redis:6379/5
+  VD_INBOX_DIR: /data/videos/inbox
+  VD_PROCESSED_DIR: /data/videos/processed
+  VD_FAILED_DIR: /data/videos/failed
+  VD_FRAMES_DIR: /data/frames
+  VD_MODELS_DIR: /data/models
+  VD_FRAME_FPS: "1.0"
+  VD_DETECTION_MIN_CONFIDENCE: "0.25"
+  VD_SUBCLASS_MIN_CONFIDENCE: "0.55"
+  VD_FRAME_JPEG_QUALITY: "90"
+  VD_CUSTOM_CLASS_FINETUNE_THRESHOLD: "100"
+  VD_SUBCLASS_RETRAIN_THRESHOLD: "25"
+  VD_YOLO_BASE_MODEL: yolo11l.pt
+  VD_INSIGHTFACE_PACK: buffalo_l
+  VD_DELETE_PROCESSED_VIDEOS: "false"
+  VD_DELETE_FRAMES_WITHOUT_OBJECTS: "true"
+
+services:
+  vd-api:
+    build:
+      context: /home/griffin/video-detections
+      dockerfile: docker/api/Dockerfile
+    container_name: vd-api
+    restart: unless-stopped
+    environment: *vd-env
+    volumes:
+      - /home/griffin/video-detections/data/frames:/data/frames
+    ports:
+      - "10801:8000"
+    networks:
+      - prod
+    depends_on:
+      - vd-worker-cpu
+
+  vd-web:
+    build:
+      context: /home/griffin/video-detections
+      dockerfile: docker/web/Dockerfile
+    container_name: vd-web
+    restart: unless-stopped
+    ports:
+      - "10800:80"
+    networks:
+      - prod
+    depends_on:
+      - vd-api
+
+  # Built from the `gpu` target, not `cpu`: the lean `cpu` image omits vd-ml,
+  # but worker/tasks/__init__.py imports every task module (incl. GPU ones)
+  # eagerly, so the worker can't even start without the full ML stack. This
+  # container still only consumes the `cpu` queue and gets no GPU device, so
+  # queue isolation is intact — only the lean-image optimization is dropped.
+  vd-worker-cpu:
+    build:
+      context: /home/griffin/video-detections
+      dockerfile: docker/worker/Dockerfile
+      target: gpu
+    container_name: vd-worker-cpu
+    restart: unless-stopped
+    environment: *vd-env
+    volumes:
+      - /home/griffin/video-detections/data/videos:/data/videos
+      - /home/griffin/video-detections/data/frames:/data/frames
+      - /home/griffin/video-detections/data/models:/data/models
+    command: celery -A worker.app worker -Q cpu -c 2 --loglevel=INFO
+    networks:
+      - prod
+
+  vd-worker-gpu:
+    build:
+      context: /home/griffin/video-detections
+      dockerfile: docker/worker/Dockerfile
+      target: gpu
+    container_name: vd-worker-gpu
+    restart: unless-stopped
+    environment: *vd-env
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - /home/griffin/video-detections/data/videos:/data/videos
+      - /home/griffin/video-detections/data/frames:/data/frames
+      - /home/griffin/video-detections/data/models:/data/models
+    command: celery -A worker.app worker -Q gpu,train -c 1 --loglevel=INFO
+    networks:
+      - prod
+
+  vd-ingest-watcher:
+    build:
+      context: /home/griffin/video-detections
+      dockerfile: docker/watcher/Dockerfile
+    container_name: vd-ingest-watcher
+    restart: unless-stopped
+    environment: *vd-env
+    volumes:
+      - /home/griffin/video-detections/data/videos:/data/videos
+    networks:
+      - prod
+
+  vd-flower:
+    image: mher/flower:2.0
+    container_name: vd-flower
+    restart: unless-stopped
+    command: celery --broker=redis://redis:6379/5 flower --port=5555
+    ports:
+      - "10802:5555"
+    networks:
+      - prod
+
+networks:
+  prod:
+    external: true

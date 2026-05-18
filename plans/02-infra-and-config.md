@@ -118,10 +118,40 @@ volumes:
   pgdata: {}
 ```
 
-The `api` service is intentionally NOT in compose — by default we run it on
-the host (`nx run api:serve`) for fast iteration. There's a compose profile
-called `full` that adds it for environments where everything should be
-containerized.
+The `api` service is intentionally NOT in `docker/docker-compose.yml` — for
+local dev we run it on the host (`nx run api:serve`) for fast iteration.
+**Production is different** — see below.
+
+## Production deployment (server `layla`)
+
+The app is deployed to a 24/7 home server (`ssh layla`) that already runs an
+unrelated multi-app docker-compose stack under `~/docker`. We reuse that
+stack's shared services rather than duplicating them.
+
+- **Compose layout.** `docker/server-compose.yml` (this repo) is installed on
+  the server as `~/docker/compose/video-detections.yml` and pulled in by the
+  `include:` list in `~/docker/docker-compose.yml`. All services join the
+  shared external `prod` network.
+- **Shared infra, not duplicated.** No postgres/redis of our own. We use the
+  stack's shared `postgres` and `redis` containers (`infra.yml`). The shared
+  Postgres image was swapped `postgres:17` → `pgvector/pgvector:pg17` (data
+  volume is compatible — same PG 17, the image only adds the `vector`
+  extension). DB `video_detection`, role `video_detection_user`. Redis uses
+  logical db **5** (`redis://redis:6379/5`) to avoid colliding with other
+  apps' keyspaces.
+- **API + web ARE containerized here**, unlike local dev — `docker/api/Dockerfile`
+  (uvicorn; runs `alembic upgrade head` on start) and `docker/web/Dockerfile`
+  (Vite build → nginx). The web nginx (`docker/web/nginx.conf`) proxies `/api`
+  and `/files` to the `vd-api` container, so the SPA's same-origin relative
+  calls work without CORS.
+- **Host ports** (LAN only): web `10800`, api `10801`, flower `10802`.
+- **Data** is bind-mounted under `/home/griffin/video-detections/data` on the
+  server (same layout as below). The watched inbox is
+  `/home/griffin/video-detections/data/videos/inbox`.
+- **Images are built on the server** (`docker compose -f
+  compose/video-detections.yml build`) — this app has no CI/registry pipeline,
+  unlike the other apps in the stack. Redeploy = rsync repo source up, rebuild,
+  `docker compose up -d`.
 
 ## Worker Dockerfile (multi-stage)
 
@@ -300,6 +330,8 @@ worker. The compose file maps it in via `env_file`.
 | `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD`| `100`                                 | labels needed to trigger fine-tune    |
 | `VD_DELETE_FRAMES_WITHOUT_OBJECTS` | `true`                                 | requirement says discard empties      |
 | `VD_DETECT_BATCH_SIZE`             | `16`                                   | frames per `vd.detect_frame_batch` task |
+| `VD_PRUNE_SIMILAR_FRAMES`          | `true`                                 | enable `vd.dedup_clip_frames` (plan 05) |
+| `VD_FRAME_SIMILARITY_THRESHOLD`    | `6`                                    | max pHash Hamming distance for a dup   |
 
 ## GPU sanity check
 

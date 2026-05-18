@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     delete_processed_videos: bool = False
     delete_frames_without_objects: bool = True
 
+    # near-duplicate frame pruning
+    prune_similar_frames: bool = True
+    frame_similarity_threshold: int = 6
+
 
 # Settings the owner may retune at runtime via the settings_kv table (the
 # /settings page); paths, URLs, and model identity stay env-only.
@@ -65,4 +69,6 @@ OVERRIDABLE_KEYS: tuple[str, ...] = (
     "yolo_finetune_imgsz",
     "delete_processed_videos",
     "delete_frames_without_objects",
+    "prune_similar_frames",
+    "frame_similarity_threshold",
 )

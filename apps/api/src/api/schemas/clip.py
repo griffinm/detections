@@ -20,6 +20,9 @@ class ClipRead(BaseModel):
     processed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Representative frame for list views; injected by the router, None until
+    # the clip has at least one kept frame.
+    thumbnail_url: str | None = None
 
     model_config = {"from_attributes": True}
 

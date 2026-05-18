@@ -103,6 +103,18 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
       className="border-b border-border hover:bg-muted/50 cursor-pointer transition-colors"
       onClick={onClick}
     >
+      <td className="px-4 py-3">
+        {clip.thumbnail_url ? (
+          <img
+            src={clip.thumbnail_url}
+            alt=""
+            loading="lazy"
+            className="h-10 w-16 rounded object-cover bg-muted"
+          />
+        ) : (
+          <div className="h-10 w-16 rounded bg-muted" aria-hidden />
+        )}
+      </td>
       <td className="px-4 py-3 font-medium text-sm truncate max-w-[280px]">{clip.filename}</td>
       <td className="px-4 py-3">
         <StatusBadge status={clip.status} />
@@ -120,7 +132,7 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
 function SkeletonRow() {
   return (
     <tr className="border-b border-border">
-      {[...Array(6)].map((_, i) => (
+      {[...Array(7)].map((_, i) => (
         <td key={i} className="px-4 py-3">
           <div className="h-4 bg-muted rounded animate-pulse" />
         </td>
@@ -152,6 +164,7 @@ export function ClipsList() {
         <table className="w-full text-left">
           <thead className="bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wide">
             <tr>
+              <th className="px-4 py-3 w-20" aria-label="Preview" />
               <th className="px-4 py-3">Filename</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Duration</th>
@@ -164,7 +177,7 @@ export function ClipsList() {
             {isPending && [...Array(5)].map((_, i) => <SkeletonRow key={i} />)}
             {data?.items.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
                   No clips yet. Drop a video into <code className="font-mono">inbox/</code> to get started.
                 </td>
               </tr>

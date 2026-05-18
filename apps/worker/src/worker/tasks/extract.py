@@ -12,6 +12,7 @@ from vd_tasks.app import celery_app
 
 from worker.db import db_session
 from worker.events import publish
+from worker.phash import compute_phash
 
 
 async def _extract_frames_async(clip_id: str) -> int:
@@ -57,6 +58,7 @@ async def _extract_frames_async(clip_id: str) -> int:
                     path=rel_path,
                     width=clip.width or 0,
                     height=clip.height or 0,
+                    phash=compute_phash(frame_file),
                     kept=True,
                     detect_status="pending",
                 )
@@ -65,6 +67,7 @@ async def _extract_frames_async(clip_id: str) -> int:
                     set_={
                         "path": stmt.excluded.path,
                         "timestamp_sec": stmt.excluded.timestamp_sec,
+                        "phash": stmt.excluded.phash,
                         "updated_at": datetime.now(UTC),
                     },
                 )

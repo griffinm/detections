@@ -25,8 +25,28 @@ async def list_clips(
         q = q.where(Clip.status == status)
 
     total = await db.scalar(select(func.count()).select_from(q.subquery()))
-    rows = await db.scalars(q.offset((page - 1) * page_size).limit(page_size))
-    items = [ClipRead.model_validate(c) for c in rows]
+    rows = list(await db.scalars(q.offset((page - 1) * page_size).limit(page_size)))
+
+    # One representative thumbnail per clip: the lowest-indexed kept frame that
+    # still has a JPEG on disk (object-free frames get pruned).
+    thumbs: dict[uuid.UUID, str] = {}
+    if rows:
+        frame_rows = await db.execute(
+            select(Frame.clip_id, Frame.path)
+            .distinct(Frame.clip_id)
+            .where(
+                Frame.clip_id.in_([c.id for c in rows]),
+                Frame.kept.is_(True),
+                Frame.path.is_not(None),
+            )
+            .order_by(Frame.clip_id, Frame.frame_index)
+        )
+        thumbs = {cid: f"/files/frames/{path}" for cid, path in frame_rows}
+
+    items = [
+        ClipRead.model_validate(c).model_copy(update={"thumbnail_url": thumbs.get(c.id)})
+        for c in rows
+    ]
     return Paginated(items=items, total=total or 0)
 
 

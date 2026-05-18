@@ -48,9 +48,12 @@ Indexes: `(status)`, `(ingested_at DESC)`.
 
 ### `frames`
 
-One row per extracted JPEG. Frames whose detections all fall below
-`detection_min_confidence` get `kept=false` and the file on disk is removed
-(per the requirement).
+One row per extracted JPEG. A frame is set `kept=false` in two cases: it has
+no detection above `detection_min_confidence` (per the requirement), or it is
+a near-duplicate of an adjacent frame collapsed by `vd.dedup_clip_frames`
+(plan 05). In both cases the JPEG on disk is then unlinked — subject to
+`delete_frames_without_objects` for the empty-frame case, unconditionally for
+the duplicate case.
 
 | Column        | Type         | Notes                                                |
 |---------------|--------------|------------------------------------------------------|
@@ -61,8 +64,8 @@ One row per extracted JPEG. Frames whose detections all fall below
 | path          | text         | NULL once pruned                                     |
 | width         | int NOT NULL |                                                      |
 | height        | int NOT NULL |                                                      |
-| phash         | bytea        | optional perceptual hash for future dedup            |
-| kept          | bool NOT NULL DEFAULT true | false → file deleted from disk         |
+| phash         | bytea        | 64-bit perceptual hash; near-dup pruning (`vd.dedup_clip_frames`, plan 05). NULL on pre-feature frames until `vd.backfill_frame_phash` runs |
+| kept          | bool NOT NULL DEFAULT true | false → frame is out of the working set (no objects, or a near-duplicate); its JPEG is then unlinked per the prune rules |
 | detect_status | detect_status NOT NULL DEFAULT 'pending'  | enum                    |
 
 ```sql

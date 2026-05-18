@@ -56,6 +56,11 @@ Idempotency: hash check. Safe to retry. Failure → status `failed` + reason.
 - After ffmpeg completes, walk the output directory, insert a `frames` row
   per file with `detect_status='pending'` and `kept=true`. Use an upsert
   on `(clip_id, frame_index)` so partial runs converge.
+- For each frame, compute a 64-bit perceptual hash (`imagehash.phash`) of the
+  JPEG and store it in `frames.phash` (8 bytes). CPU-only and cheap — it runs
+  here on the `cpu` worker, in the same directory walk as the row insert. The
+  hash is the similarity signal for near-duplicate pruning (see
+  `vd.dedup_clip_frames`).
 - Schedule `vd.detect_frame_batch` tasks on the `gpu` queue (`VD_DETECT_BATCH_SIZE`
   frames per task, default 16, to amortize model warm-up).
 - Set clip status → `detecting` (or straight to `done` if the clip yielded
@@ -86,7 +91,9 @@ Idempotency: the upsert + a per-frame status make this safely re-runnable.
 - Set per-frame `detect_status='done'`.
 - Publish `frame.detect.done` event to Redis pub/sub.
 - After the batch, if no frame of the clip is still `detect_status='pending'`,
-  set clip status → `done` and publish `clip.done`.
+  set clip status → `done`, publish `clip.done`, and schedule
+  `vd.dedup_clip_frames(clip_id)` on the `cpu` queue. Dedup is an off-critical-
+  path cleanup pass — the clip is `done` regardless of whether/when it runs.
 
 GPU streaming: the worker uses a process-level YOLO instance and reads
 frames into a torch tensor in batches. Batching gives a 3-5× throughput
@@ -138,6 +145,8 @@ improvement vs per-frame inference.
      frame; write `data.yaml`.
   3. Train from the previous checkpoint via `vd_ml.train_yolo` in a worker
      thread; bridge per-epoch progress back as `training_run.update` events.
+     `train_yolo` passes `workers=0` to Ultralytics: the Celery prefork worker
+     is daemonic and cannot fork DataLoader child processes.
   4. Register a new `model_versions` row. **Regression guard:** activate it
      (via `vd_db.activate_model_version`) only if val mAP50-95 ≥ the previous
      active model's − 0.01 (skipped on the first-ever fine-tune). Activation
@@ -171,6 +180,67 @@ improvement vs per-frame inference.
 ### `vd.backfill_detections(model_version_id, since_clip_id?)`
 - Re-runs detection over historical kept frames using the given model.
 - Lower priority queue. Cancellable.
+
+### `vd.dedup_clip_frames(clip_id: uuid)` *(`cpu` queue)*
+
+Collapses runs of near-identical frames within one clip down to a single
+representative. Scheduled by `vd.detect_frame_batch` once the clip finishes
+detecting; a no-op when `prune_similar_frames` is unset.
+
+- Load the clip's frames with `kept=true` and a non-null `phash`, ordered by
+  `frame_index`. (Frames with no `phash` — e.g. pre-feature clips not yet
+  backfilled — are skipped, never pruned.)
+- Walk the sequence holding a *reference* frame. For each next frame, take the
+  Hamming distance between its `phash` and the reference's:
+  - **distance > `frame_similarity_threshold`** → the scene changed; this
+    frame becomes the new reference. Keep it.
+  - **distance ≤ threshold** → candidate duplicate of the reference. Confirm
+    it is **detection-aware redundant**: same set of `class_id`s as the
+    reference frame, with each box's centre within a small tolerance. Only
+    then is it a true duplicate.
+- For each confirmed duplicate frame:
+  - **Skip it entirely if any of its detections is `reviewed=true` or
+    `source='user'`** — reviewed/user boxes are ground truth and are never
+    pruned. A frame carrying one keeps the whole frame.
+  - Otherwise set `frames.kept=false`, soft-delete its detections
+    (`deleted_at=now()`, plus a `user_delete` audit row with
+    `model_version_id` carried over so the ledger stays complete), and
+    schedule `vd.prune_frame(frame_id, force=True)` on `cpu` to unlink the
+    JPEG. `vd.prune_frame` gains a `force` flag for this: the no-object caller
+    leaves it `False` (file removal stays gated on
+    `delete_frames_without_objects`), but a deduped frame is redundant by
+    definition, so its JPEG is always unlinked — the gate that authorised it
+    is `prune_similar_frames`, checked once here, not per file.
+- Representative choice: the reference is not blindly the first frame of a
+  run — among a run of mutual duplicates, keep the frame with the most
+  detections, tie-broken by highest mean `confidence_class`, so the surviving
+  frame is the most informative one.
+- Comparison is **within a clip only** and strictly between `frame_index`-
+  adjacent frames, so a clip that revisits a scene is not over-collapsed.
+- Publish `clip.frames.deduped` with the kept/pruned counts.
+
+Idempotent: re-running only ever finds already-`kept=true` frames, and an
+identical walk produces the same survivors.
+
+Rationale for *detection-aware* (not pure pHash): a whole-frame perceptual
+hash can read two frames as near-identical while one has gained a small but
+real detection (someone entering at the frame edge). Requiring the detection
+sets to also match means dedup never hides a frame where something changed —
+the labeling queue shrinks without losing a single new object.
+
+### `vd.backfill_frame_phash(clip_id?: uuid)` *(`cpu` queue)*
+
+One-off migration for frames extracted before phash existed (all pre-feature
+clips have `phash IS NULL`). For each `kept=true` frame with `path` set and
+`phash IS NULL`: read the JPEG, compute the perceptual hash, write `phash`.
+Then, if `prune_similar_frames` is set, chain into `vd.dedup_clip_frames` for
+each affected clip so historical clips get the same treatment as new ones.
+
+- Scoped to one clip when `clip_id` is given, else sweeps every clip.
+- Idempotent and resumable — a frame that already has a `phash` is skipped, so
+  a re-run only picks up what is still missing.
+- Frames whose JPEG was already purged (`path IS NULL`, e.g. via
+  `vd.purge_frames`) cannot be hashed and are left as-is.
 
 ### `vd.purge_frames(older_than_days: int)` *(Phase 7, `cpu` queue)*
 - Disk reclamation: deletes the JPEG of every frame whose clip is older than
@@ -268,6 +338,11 @@ Failure handling:
 - `VD_SUBCLASS_RETRAIN_THRESHOLD` — labels needed (default 25).
 - `VD_DELETE_FRAMES_WITHOUT_OBJECTS` — bool (default true).
 - `VD_DELETE_PROCESSED_VIDEOS` — bool (default false).
+- `VD_PRUNE_SIMILAR_FRAMES` — bool (default true). Master switch for
+  `vd.dedup_clip_frames`; when unset the task is a no-op.
+- `VD_FRAME_SIMILARITY_THRESHOLD` — int (default 6). Max pHash Hamming
+  distance (out of 64) at which two adjacent frames are duplicate candidates.
+  Higher = more aggressive pruning.
 
 ## Observability
 

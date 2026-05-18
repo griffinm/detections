@@ -39,10 +39,15 @@ def train_subclass_classifier(
     features = np.asarray(embeddings, dtype="float32")
     targets = np.asarray(labels)
 
+    n_classes = len(set(labels))
     min_per_class = min(Counter(labels).values())
-    if len(labels) >= 10 and min_per_class >= 2:
+    # A stratified holdout needs ≥1 sample per class on each side, so the
+    # holdout's absolute size must be ≥ n_classes — a plain 20% fraction can
+    # round below that on small/many-class datasets.
+    n_val = max(n_classes, round(len(labels) * 0.2))
+    if len(labels) >= 10 and min_per_class >= 2 and len(labels) - n_val >= n_classes:
         x_train, x_val, y_train, y_val = train_test_split(
-            features, targets, test_size=0.2, random_state=0, stratify=targets
+            features, targets, test_size=n_val, random_state=0, stratify=targets
         )
     else:
         x_train, y_train, x_val, y_val = features, targets, features, targets

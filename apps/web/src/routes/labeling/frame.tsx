@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
+import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ClassPicker } from "@/components/labeling/ClassPicker";
 import { DetectionCrop } from "@/components/labeling/DetectionCrop";
 import { DetectionList } from "@/components/labeling/DetectionList";
 import { KeymapModal } from "@/components/labeling/KeymapModal";
 import { LabelingCanvas } from "@/components/labeling/LabelingCanvas";
+import { cn } from "@/lib/utils";
 import { useClasses } from "@/hooks/useClasses";
 import { useSubclasses } from "@/hooks/useSubclasses";
 import { useDetectionActions } from "@/hooks/useDetections";
@@ -14,6 +16,9 @@ import { fetchFrame, useFrame } from "@/hooks/useFrame";
 import { useClip } from "@/hooks/useFrames";
 import { useLabelingHotkeys } from "@/hooks/useLabelingHotkeys";
 import { useLabelingStore } from "@/stores/labeling";
+
+const PANEL_HEADING =
+  "mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 
 export function LabelingFrame() {
   const { fid = "" } = useParams<{ fid: string }>();
@@ -29,6 +34,10 @@ export function LabelingFrame() {
   const resetFrame = useLabelingStore((s) => s.resetFrame);
   const setActiveFrame = useLabelingStore((s) => s.setActiveFrame);
   const [keymapOpen, setKeymapOpen] = useState(false);
+  // Which panel the stacked (mobile) layout shows below the canvas.
+  const [mobileTab, setMobileTab] = useState<"detections" | "classes">(
+    "detections",
+  );
 
   useEffect(() => {
     resetFrame();
@@ -107,22 +116,22 @@ export function LabelingFrame() {
   const hasQueue = queueIndex >= 0;
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col">
-      <div className="flex items-center gap-3 border-b border-border pb-3">
+    <div className="flex flex-col lg:h-[calc(100vh-7rem)]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border pb-3">
         <button
           onClick={() => navigate("/labeling")}
-          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
-          ← Queue
+          <ChevronLeft className="h-4 w-4" /> Queue
         </button>
-        <span className="truncate text-sm font-medium">
+        <span className="min-w-0 max-w-[40vw] truncate text-sm font-medium">
           {clip?.filename ?? "clip"}
         </span>
         <span className="text-sm text-muted-foreground">
           frame {frame.frame_index}
           {hasQueue && ` · ${queueIndex + 1}/${queueIds.length}`}
         </span>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
           <Button size="sm" onClick={() => void onSaveNext()}>
             Save &amp; Next
           </Button>
@@ -141,27 +150,37 @@ export function LabelingFrame() {
           >
             Skip
           </Button>
-          <Button size="sm" variant="outline" onClick={() => navigate("/labeling")}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate("/labeling")}
+          >
             End
           </Button>
-          <Button size="sm" variant="ghost" onClick={onToggleKeymap}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="hidden sm:inline-flex"
+            onClick={onToggleKeymap}
+            aria-label="Keyboard shortcuts"
+          >
             ?
           </Button>
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-3 pt-3">
-        <aside className="w-56 shrink-0 overflow-y-auto">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Detections
-          </h2>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 pt-3 lg:flex-row">
+        {/* Detections — fixed left panel on desktop. */}
+        <aside className="hidden w-56 shrink-0 overflow-y-auto lg:block">
+          <h2 className={PANEL_HEADING}>Detections</h2>
           <DetectionList
             frame={frame}
             classes={classes}
             subclasses={subclasses}
           />
         </aside>
-        <main className="min-w-0 flex-1 overflow-auto">
+
+        <main className="min-w-0 flex-1 lg:overflow-auto">
           <LabelingCanvas
             frame={frame}
             classes={classes}
@@ -170,10 +189,10 @@ export function LabelingFrame() {
           />
           <DetectionCrop frame={frame} />
         </main>
-        <aside className="w-52 shrink-0 overflow-y-auto">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Classes
-          </h2>
+
+        {/* Classes — fixed right panel on desktop. */}
+        <aside className="hidden w-52 shrink-0 overflow-y-auto lg:block">
+          <h2 className={PANEL_HEADING}>Classes</h2>
           <ClassPicker
             classes={classes}
             subclasses={subclasses}
@@ -181,6 +200,42 @@ export function LabelingFrame() {
             actions={actions}
           />
         </aside>
+
+        {/* Stacked, tabbed panels below the canvas on small screens. */}
+        <div className="lg:hidden">
+          <div className="flex border-b border-border">
+            {(["detections", "classes"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setMobileTab(tab)}
+                className={cn(
+                  "-mb-px border-b-2 px-3 py-2 text-sm font-medium capitalize transition-colors",
+                  mobileTab === tab
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          <div className="pt-3">
+            {mobileTab === "detections" ? (
+              <DetectionList
+                frame={frame}
+                classes={classes}
+                subclasses={subclasses}
+              />
+            ) : (
+              <ClassPicker
+                classes={classes}
+                subclasses={subclasses}
+                frame={frame}
+                actions={actions}
+              />
+            )}
+          </div>
+        </div>
       </div>
 
       <KeymapModal open={keymapOpen} onOpenChange={setKeymapOpen} />

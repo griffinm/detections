@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { useActivateModel, useModels, type ModelVersion } from "@/hooks/useModels";
 
@@ -31,10 +32,10 @@ export function ModelsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold tracking-tight">Models</h1>
-      <p className="text-sm text-muted-foreground">
-        YOLO detectors and sub-class classifiers. One version per kind is active.
-      </p>
+      <PageHeader
+        title="Models"
+        description="YOLO detectors and sub-class classifiers. One version per kind is active."
+      />
 
       {isPending ? (
         <div className="space-y-1.5">
@@ -45,8 +46,8 @@ export function ModelsPage() {
       ) : models.length === 0 ? (
         <p className="text-sm text-muted-foreground">No model versions yet.</p>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Name</th>
@@ -61,8 +62,12 @@ export function ModelsPage() {
               {models.map((model) => (
                 <tr key={model.id} className="border-t border-border">
                   <td className="px-3 py-2">{model.name}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{model.kind}</td>
-                  <td className="px-3 py-2 tabular-nums">{metricSummary(model)}</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {model.kind}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums">
+                    {metricSummary(model)}
+                  </td>
                   <td className="px-3 py-2 tabular-nums text-muted-foreground">
                     {model.trained_on ?? "—"}
                   </td>

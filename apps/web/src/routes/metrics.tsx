@@ -10,6 +10,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useModels } from "@/hooks/useModels";
 import {
@@ -20,19 +22,17 @@ import {
   type AccuracyPoint,
 } from "@/hooks/useMetrics";
 
-const SERIES_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#a855f7", "#ef4444", "#14b8a6"];
+const SERIES_COLORS = [
+  "#3b82f6",
+  "#22c55e",
+  "#f59e0b",
+  "#a855f7",
+  "#ef4444",
+  "#14b8a6",
+];
 
 const pct = (value: number | null | undefined): string =>
   value == null ? "—" : `${(value * 100).toFixed(1)}%`;
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-lg border border-border bg-card p-4">
-      <h2 className="mb-3 text-sm font-semibold">{title}</h2>
-      {children}
-    </section>
-  );
-}
 
 /** Pivot the long-form accuracy rows into one row per period, one key per model. */
 function pivotAccuracy(points: AccuracyPoint[]): {
@@ -40,7 +40,9 @@ function pivotAccuracy(points: AccuracyPoint[]): {
   seriesIds: string[];
 } {
   const periods = [...new Set(points.map((p) => p.period))].sort();
-  const seriesIds = [...new Set(points.map((p) => p.model_version_id ?? "unknown"))];
+  const seriesIds = [
+    ...new Set(points.map((p) => p.model_version_id ?? "unknown")),
+  ];
   const rows = periods.map((period) => {
     const row: Record<string, number | string> = {
       period: new Date(period).toLocaleDateString(),
@@ -68,21 +70,27 @@ function AccuracySection() {
   const { rows, seriesIds } = pivotAccuracy(points);
 
   return (
-    <Card title="Class accuracy over time">
-      <div className="mb-3 flex gap-1">
-        {(["day", "week"] as const).map((option) => (
-          <button
-            key={option}
-            onClick={() => setBucket(option)}
-            className={cn(
-              "rounded px-2 py-0.5 text-xs",
-              bucket === option ? "bg-accent" : "text-muted-foreground hover:bg-muted",
-            )}
-          >
-            {option}
-          </button>
-        ))}
-      </div>
+    <Card
+      title="Class accuracy over time"
+      actions={
+        <div className="flex gap-1">
+          {(["day", "week"] as const).map((option) => (
+            <button
+              key={option}
+              onClick={() => setBucket(option)}
+              className={cn(
+                "rounded px-2 py-0.5 text-xs",
+                bucket === option
+                  ? "bg-accent"
+                  : "text-muted-foreground hover:bg-muted",
+              )}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      }
+    >
       {isPending ? (
         <div className="h-64 animate-pulse rounded bg-muted" />
       ) : rows.length === 0 ? (
@@ -94,7 +102,12 @@ function AccuracySection() {
           <LineChart data={rows} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-            <YAxis domain={[0, 1]} tickFormatter={pct} tick={{ fontSize: 11 }} width={48} />
+            <YAxis
+              domain={[0, 1]}
+              tickFormatter={pct}
+              tick={{ fontSize: 11 }}
+              width={48}
+            />
             <Tooltip formatter={(value: number) => pct(value)} />
             {seriesIds.map((id, i) => (
               <Line
@@ -122,30 +135,38 @@ function PerClassSection() {
       {isPending ? (
         <div className="h-24 animate-pulse rounded bg-muted" />
       ) : metrics.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No reviewed detections yet.</p>
+        <p className="text-sm text-muted-foreground">
+          No reviewed detections yet.
+        </p>
       ) : (
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="py-1.5 font-medium">Class</th>
-              <th className="py-1.5 font-medium">Precision</th>
-              <th className="py-1.5 font-medium">Recall</th>
-              <th className="py-1.5 font-medium">Predicted</th>
-              <th className="py-1.5 font-medium">Actual</th>
-            </tr>
-          </thead>
-          <tbody>
-            {metrics.map((m) => (
-              <tr key={m.class_id} className="border-t border-border">
-                <td className="py-1.5">{m.class_name}</td>
-                <td className="py-1.5 tabular-nums">{pct(m.precision)}</td>
-                <td className="py-1.5 tabular-nums">{pct(m.recall)}</td>
-                <td className="py-1.5 tabular-nums text-muted-foreground">{m.n_predicted}</td>
-                <td className="py-1.5 tabular-nums text-muted-foreground">{m.n_actual}</td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[420px] text-sm">
+            <thead className="text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="py-1.5 font-medium">Class</th>
+                <th className="py-1.5 font-medium">Precision</th>
+                <th className="py-1.5 font-medium">Recall</th>
+                <th className="py-1.5 font-medium">Predicted</th>
+                <th className="py-1.5 font-medium">Actual</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {metrics.map((m) => (
+                <tr key={m.class_id} className="border-t border-border">
+                  <td className="py-1.5">{m.class_name}</td>
+                  <td className="py-1.5 tabular-nums">{pct(m.precision)}</td>
+                  <td className="py-1.5 tabular-nums">{pct(m.recall)}</td>
+                  <td className="py-1.5 tabular-nums text-muted-foreground">
+                    {m.n_predicted}
+                  </td>
+                  <td className="py-1.5 tabular-nums text-muted-foreground">
+                    {m.n_actual}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </Card>
   );
@@ -158,7 +179,9 @@ function CalibrationSection() {
       {isPending ? (
         <div className="h-64 animate-pulse rounded bg-muted" />
       ) : !data || data.bins.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No scored detections yet.</p>
+        <p className="text-sm text-muted-foreground">
+          No scored detections yet.
+        </p>
       ) : (
         <>
           <p className="mb-2 text-sm">
@@ -176,7 +199,10 @@ function CalibrationSection() {
             )}
           </p>
           <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={data.bins} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+            <LineChart
+              data={data.bins}
+              margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+            >
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
               <XAxis
                 dataKey="mean_confidence"
@@ -225,13 +251,15 @@ function ChangesSection() {
       {isPending ? (
         <div className="h-24 animate-pulse rounded bg-muted" />
       ) : changes.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No corrections recorded yet.</p>
+        <p className="text-sm text-muted-foreground">
+          No corrections recorded yet.
+        </p>
       ) : (
         <ul className="space-y-1 text-sm">
           {changes.map((change) => (
             <li
               key={`${change.detection_id}-${change.at}`}
-              className="flex items-center gap-2 border-t border-border py-1.5 first:border-t-0"
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border py-1.5 first:border-t-0"
             >
               <span className="text-muted-foreground">
                 {new Date(change.at).toLocaleString()}
@@ -263,12 +291,10 @@ function ChangesSection() {
 export function MetricsPage() {
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Metrics</h1>
-        <p className="text-sm text-muted-foreground">
-          Detection accuracy over time, per class, per model version.
-        </p>
-      </div>
+      <PageHeader
+        title="Metrics"
+        description="Detection accuracy over time, per class, per model version."
+      />
       <AccuracySection />
       <div className="grid gap-4 lg:grid-cols-2">
         <PerClassSection />

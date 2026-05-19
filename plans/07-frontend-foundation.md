@@ -135,6 +135,31 @@ Live status indicators in the topbar:
 - "training in progress" pill if any run is active
 - "GPU temp / util" optional, if we add nvidia-ml-py to system endpoint
 
+### Responsive behaviour
+
+The shell is responsive at the `lg` breakpoint:
+- **`lg` and up** — sidebar is statically docked (`AppShell` flex row).
+- **Below `lg`** — sidebar collapses to an off-canvas drawer. `AppShell`
+  owns the open/closed state; `Topbar` shows a hamburger that opens it and
+  `Sidebar` renders as a fixed overlay + backdrop. Nav clicks close it.
+
+Page-level rules: every data table is wrapped in `overflow-x-auto` with a
+`min-w-*` so it scrolls instead of crushing columns on a phone; grids step
+down their column counts; the labeling tool (plan 08) stacks the canvas over
+tabbed Detections/Classes panels below `lg`.
+
+### Shared UI primitives
+
+To keep pages visually consistent, common patterns are extracted rather than
+re-implemented per route:
+- `components/layout/PageHeader.tsx` — title + optional breadcrumbs, inline
+  meta, right-aligned actions. Every route's heading row uses it.
+- `components/ui/status-badge.tsx` — one badge for clip-processing **and**
+  training-run statuses (shared colour map).
+- `components/ui/card.tsx` — bordered section surface (title/actions/body).
+- `components/ui/select.tsx` — styled native `<select>`.
+- `lib/format.ts` — `formatBytes`, `formatDuration` (no per-file copies).
+
 ## Routes
 
 | Path                          | Purpose                                            |

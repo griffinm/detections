@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { GraduationCap, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { SubclassFormDialog } from "@/components/SubclassFormDialog";
 import { cropBackgroundStyle } from "@/lib/cropStyle";
@@ -62,7 +63,8 @@ function ExamplesGallery({ subclass }: { subclass: VdSubclass }) {
     return (
       <p className="text-sm text-muted-foreground">
         No examples yet — promote detections with{" "}
-        <kbd className="rounded bg-muted px-1 text-xs">S</kbd> in the labeling UI.
+        <kbd className="rounded bg-muted px-1 text-xs">S</kbd> in the labeling
+        UI.
       </p>
     );
   }
@@ -115,7 +117,10 @@ export function ClassDetail() {
 
   const trainClassifier = async (): Promise<void> => {
     try {
-      await startTraining.mutateAsync({ kind: "classifier", target_class_id: id });
+      await startTraining.mutateAsync({
+        kind: "classifier",
+        target_class_id: id,
+      });
       toast.success("Sub-class classifier training queued");
     } catch {
       toast.error("Could not start classifier training");
@@ -124,37 +129,32 @@ export function ClassDetail() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Link
-          to="/classes"
-          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          ← Classes
-        </Link>
-        <h1 className="text-2xl font-bold tracking-tight">
-          {cls?.name ?? "Class"}
-        </h1>
-        <div className="ml-auto flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => void trainClassifier()}
-            disabled={active.length < 2 || startTraining.isPending}
-            title={
-              active.length < 2
-                ? "Needs at least 2 sub-classes"
-                : "Train a classifier on the labelled examples"
-            }
-          >
-            <GraduationCap className="h-4 w-4" /> Train classifier
-          </Button>
-          <Button variant="outline" onClick={() => void triggerRescan()}>
-            <RefreshCw className="h-4 w-4" /> Re-scan existing clips
-          </Button>
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" /> New sub-class
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        breadcrumbs={[{ label: "Classes", to: "/classes" }]}
+        title={cls?.name ?? "Class"}
+        actions={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => void trainClassifier()}
+              disabled={active.length < 2 || startTraining.isPending}
+              title={
+                active.length < 2
+                  ? "Needs at least 2 sub-classes"
+                  : "Train a classifier on the labelled examples"
+              }
+            >
+              <GraduationCap className="h-4 w-4" /> Train classifier
+            </Button>
+            <Button variant="outline" onClick={() => void triggerRescan()}>
+              <RefreshCw className="h-4 w-4" /> Re-scan existing clips
+            </Button>
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" /> New sub-class
+            </Button>
+          </>
+        }
+      />
 
       {isPending ? (
         <div className="h-11 animate-pulse rounded bg-muted" />

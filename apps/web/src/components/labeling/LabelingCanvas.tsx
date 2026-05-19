@@ -119,7 +119,8 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
     void actions.update(id, { bbox });
   }
 
-  function onStageMouseDown(e: Konva.KonvaEventObject<MouseEvent>): void {
+  // Pointer (not mouse) events so box-drawing works with both mouse and touch.
+  function onStagePointerDown(e: Konva.KonvaEventObject<PointerEvent>): void {
     if (mode === "drawing") {
       const pos = e.target.getStage()?.getPointerPosition();
       if (!pos) return;
@@ -130,7 +131,7 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
     if (e.target === e.target.getStage()) select(null);
   }
 
-  function onStageMouseMove(e: Konva.KonvaEventObject<MouseEvent>): void {
+  function onStagePointerMove(e: Konva.KonvaEventObject<PointerEvent>): void {
     if (mode !== "drawing" || !drawStart.current) return;
     const pos = e.target.getStage()?.getPointerPosition();
     if (!pos) return;
@@ -143,7 +144,7 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
     });
   }
 
-  async function onStageMouseUp(): Promise<void> {
+  async function onStagePointerUp(): Promise<void> {
     if (mode !== "drawing" || !draft) return;
     const rect = draft;
     drawStart.current = null;
@@ -164,10 +165,15 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
         <Stage
           width={dispW}
           height={dispH}
-          onMouseDown={onStageMouseDown}
-          onMouseMove={onStageMouseMove}
-          onMouseUp={() => void onStageMouseUp()}
-          style={{ cursor: mode === "drawing" ? "crosshair" : "default" }}
+          onPointerDown={onStagePointerDown}
+          onPointerMove={onStagePointerMove}
+          onPointerUp={() => void onStagePointerUp()}
+          style={{
+            cursor: mode === "drawing" ? "crosshair" : "default",
+            // Suppress browser pan/zoom while drawing a box on a touchscreen;
+            // leave vertical scroll intact otherwise so the page still scrolls.
+            touchAction: mode === "drawing" ? "none" : "pan-y",
+          }}
         >
           <Layer listening={false}>
             <KonvaImage image={image} width={dispW} height={dispH} />

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { ClassFormDialog } from "@/components/ClassFormDialog";
 import { useClasses, useDeleteClass, type VdClass } from "@/hooks/useClasses";
@@ -23,12 +24,14 @@ export function ClassesList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">Classes</h1>
-        <Button className="ml-auto" onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4" /> New class
-        </Button>
-      </div>
+      <PageHeader
+        title="Classes"
+        actions={
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" /> New class
+          </Button>
+        }
+      />
 
       {isPending ? (
         <div className="space-y-1.5">
@@ -37,8 +40,8 @@ export function ClassesList() {
           ))}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[480px] text-sm">
             <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Class</th>
@@ -62,7 +65,9 @@ export function ClassesList() {
                       {cls.name}
                     </Link>
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">{cls.source}</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {cls.source}
+                  </td>
                   <td className="px-3 py-2">
                     {cls.is_active ? (
                       <span className="text-green-600">active</span>

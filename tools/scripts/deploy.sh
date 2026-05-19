@@ -36,7 +36,13 @@ ok "Compose file installed"
 
 warn "Building images + restarting on ${SSH_HOST} (this can take a while)"
 # api container runs `alembic upgrade head` on start — no manual migration step.
+# Services pin explicit container_name:, which is a global (non-project-scoped)
+# namespace — a stale or differently-projected container makes `up` fail with
+# "Conflicting container name". `down` clears the normal case; the `docker rm`
+# fallback catches containers left under a different compose project name.
 ssh "$SSH_HOST" "cd \$HOME/docker && \
   docker compose -f ${COMPOSE_REL} build && \
+  docker compose -f ${COMPOSE_REL} down --remove-orphans && \
+  { docker rm -f vd-api vd-web vd-worker-cpu vd-worker-gpu vd-ingest-watcher vd-flower 2>/dev/null || true; } && \
   docker compose -f ${COMPOSE_REL} up -d"
 ok "Deploy complete — web :10800  api :10801  flower :10802"

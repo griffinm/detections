@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { useClasses } from "@/hooks/useClasses";
 import { useLabelingQueue } from "@/hooks/useLabelingQueue";
 import { useLabelingStore } from "@/stores/labeling";
-
-const SELECT_CLASS =
-  "rounded-md border border-input bg-background px-2 py-1 text-sm";
 
 export function LabelingQueue() {
   const navigate = useNavigate();
@@ -26,38 +25,36 @@ export function LabelingQueue() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">Labeling Queue</h1>
-        <select
-          className={SELECT_CLASS}
-          value={strategy}
-          onChange={(e) => setStrategy(e.target.value)}
-        >
-          <option value="lowconf">Lowest confidence</option>
-          <option value="unreviewed">Newest first</option>
-        </select>
-        <select
-          className={SELECT_CLASS}
-          value={classId}
-          onChange={(e) => setClassId(e.target.value)}
-        >
-          <option value="">All classes</option>
-          {classes
-            .filter((c) => c.is_active)
-            .map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-        </select>
-        <Button
-          className="ml-auto"
-          disabled={items.length === 0}
-          onClick={() => startAt(0)}
-        >
-          Start reviewing
-        </Button>
-      </div>
+      <PageHeader
+        title="Labeling Queue"
+        actions={
+          <>
+            <Select
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+            >
+              <option value="lowconf">Lowest confidence</option>
+              <option value="unreviewed">Newest first</option>
+            </Select>
+            <Select
+              value={classId}
+              onChange={(e) => setClassId(e.target.value)}
+            >
+              <option value="">All classes</option>
+              {classes
+                .filter((c) => c.is_active)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+            </Select>
+            <Button disabled={items.length === 0} onClick={() => startAt(0)}>
+              Start reviewing
+            </Button>
+          </>
+        }
+      />
 
       {isPending ? (
         <div className="space-y-1.5">
@@ -77,7 +74,7 @@ export function LabelingQueue() {
             <button
               key={item.frame_id}
               onClick={() => startAt(index)}
-              className="flex w-full items-center gap-3 rounded-lg border border-border p-2 text-left hover:bg-muted"
+              className="flex w-full items-center gap-3 rounded-lg border border-border p-2 text-left transition-colors hover:bg-muted"
             >
               <div className="h-12 w-20 shrink-0 overflow-hidden rounded bg-muted">
                 {item.image_url && (
@@ -97,11 +94,11 @@ export function LabelingQueue() {
                   frame {item.frame_index}
                 </div>
               </div>
-              <span className="rounded-md bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+              <span className="shrink-0 rounded-md bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
                 {item.unreviewed_count} to review
               </span>
               {item.min_confidence != null && (
-                <span className="w-12 text-right text-xs tabular-nums text-muted-foreground">
+                <span className="w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                   {Math.round(item.min_confidence * 100)}%
                 </span>
               )}

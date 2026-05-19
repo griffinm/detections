@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDiskUsage, usePurgeFrames } from "@/hooks/useSystem";
@@ -14,24 +15,22 @@ export function SystemPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">System</h1>
-        <p className="text-sm text-muted-foreground">
-          Disk usage and frame retention.
-        </p>
-      </div>
+      <PageHeader
+        title="System"
+        description="Disk usage and frame retention."
+      />
 
       {isError && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
           Failed to load disk usage.
         </div>
       )}
-      {isPending && <div className="h-40 rounded-lg bg-muted animate-pulse" />}
+      {isPending && <div className="h-40 animate-pulse rounded-lg bg-muted" />}
 
       {data && (
         <>
-          <div className="rounded-lg border border-border p-4 space-y-3">
-            <div className="flex items-center justify-between text-sm">
+          <div className="space-y-3 rounded-lg border border-border p-4">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-sm">
               <span className="font-semibold">Data directories</span>
               <span className="text-muted-foreground">
                 {formatBytes(data.free_bytes)} free of{" "}
@@ -40,14 +39,14 @@ export function SystemPage() {
             </div>
             {data.dirs.map((d) => (
               <div key={d.name} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 text-sm">
                   <span className="font-medium capitalize">{d.name}</span>
                   <span className="text-muted-foreground">
                     {formatBytes(d.bytes)} · {d.file_count.toLocaleString()}{" "}
                     files
                   </span>
                 </div>
-                <div className="h-2 rounded bg-muted overflow-hidden">
+                <div className="h-2 overflow-hidden rounded bg-muted">
                   <div
                     className="h-full bg-primary"
                     style={{
@@ -59,7 +58,7 @@ export function SystemPage() {
                     }}
                   />
                 </div>
-                <div className="text-xs text-muted-foreground font-mono break-all">
+                <div className="break-all font-mono text-xs text-muted-foreground">
                   {d.path}
                 </div>
               </div>
@@ -69,7 +68,7 @@ export function SystemPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-border p-4 space-y-3">
+          <div className="space-y-3 rounded-lg border border-border p-4">
             <div>
               <h2 className="text-base font-semibold">Purge old frames</h2>
               <p className="text-sm text-muted-foreground">
@@ -77,7 +76,7 @@ export function SystemPage() {
                 detection records are kept — only the images are removed.
               </p>
             </div>
-            <div className="flex items-end gap-2">
+            <div className="flex flex-wrap items-end gap-2">
               <div className="space-y-1">
                 <label className="text-xs text-muted-foreground">
                   Older than (days)

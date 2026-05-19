@@ -8,7 +8,10 @@
 # Build context is the repo source rsynced to /home/griffin/video-detections.
 
 x-vd-env: &vd-env
-  VD_DATABASE_URL: postgresql+asyncpg://video_detection_user:${VIDEO_DETECTION_DB_PASSWORD}@postgres:5432/video_detection
+  # `:?` — fail the `compose up` loudly if the var is unset, rather than
+  # silently baking an empty password into the container (which only surfaces
+  # later as a crash-looping auth failure). Set it in ~/docker/.env.
+  VD_DATABASE_URL: postgresql+asyncpg://video_detection_user:${VIDEO_DETECTION_DB_PASSWORD:?set VIDEO_DETECTION_DB_PASSWORD in ~/docker/.env}@postgres:5432/video_detection
   VD_REDIS_URL: redis://redis:6379/5
   VD_INBOX_DIR: /data/videos/inbox
   VD_PROCESSED_DIR: /data/videos/processed

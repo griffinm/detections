@@ -6,3 +6,11 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 ** 4) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
   return `${(bytes / 1024 ** 4).toFixed(2)} TB`;
 }
+
+/** Clip duration as `m:ss`. */
+export function formatDuration(sec: number | null): string {
+  if (sec == null) return "—";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}

@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import {
   Dialog,
   DialogContent,
@@ -12,38 +14,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { formatBytes, formatDuration } from "@/lib/format";
 import { type Clip, useClipsList, useDeleteClip } from "@/hooks/useClips";
-
-const STATUS_STYLES: Record<string, string> = {
-  pending: "bg-muted text-muted-foreground",
-  extracting: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 animate-pulse",
-  detecting: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 animate-pulse",
-  done: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  failed: "bg-destructive/20 text-destructive",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_STYLES[status] ?? "bg-muted text-muted-foreground";
-  return (
-    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${cls}`}>
-      {status}
-    </span>
-  );
-}
-
-function formatDuration(sec: number | null): string {
-  if (sec == null) return "—";
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-}
 
 function DeleteClipButton({ clip }: { clip: Clip }) {
   const del = useDeleteClip();
@@ -100,7 +72,7 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
 
   return (
     <tr
-      className="border-b border-border hover:bg-muted/50 cursor-pointer transition-colors"
+      className="cursor-pointer border-b border-border transition-colors hover:bg-muted/50"
       onClick={onClick}
     >
       <td className="px-4 py-3">
@@ -109,19 +81,27 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
             src={clip.thumbnail_url}
             alt=""
             loading="lazy"
-            className="h-10 w-16 rounded object-cover bg-muted"
+            className="h-10 w-16 rounded bg-muted object-cover"
           />
         ) : (
           <div className="h-10 w-16 rounded bg-muted" aria-hidden />
         )}
       </td>
-      <td className="px-4 py-3 font-medium text-sm truncate max-w-[280px]">{clip.filename}</td>
+      <td className="max-w-[280px] truncate px-4 py-3 text-sm font-medium">
+        {clip.filename}
+      </td>
       <td className="px-4 py-3">
         <StatusBadge status={clip.status} />
       </td>
-      <td className="px-4 py-3 text-sm text-muted-foreground">{formatDuration(clip.duration_sec)}</td>
-      <td className="px-4 py-3 text-sm text-muted-foreground">{formatBytes(clip.size_bytes)}</td>
-      <td className="px-4 py-3 text-sm text-muted-foreground">{ingestedAt}</td>
+      <td className="px-4 py-3 text-sm text-muted-foreground">
+        {formatDuration(clip.duration_sec)}
+      </td>
+      <td className="px-4 py-3 text-sm text-muted-foreground">
+        {formatBytes(clip.size_bytes)}
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-sm text-muted-foreground">
+        {ingestedAt}
+      </td>
       <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
         <DeleteClipButton clip={clip} />
       </td>
@@ -134,7 +114,7 @@ function SkeletonRow() {
     <tr className="border-b border-border">
       {[...Array(7)].map((_, i) => (
         <td key={i} className="px-4 py-3">
-          <div className="h-4 bg-muted rounded animate-pulse" />
+          <div className="h-4 animate-pulse rounded bg-muted" />
         </td>
       ))}
     </tr>
@@ -147,12 +127,16 @@ export function ClipsList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Clips</h1>
-        {data && (
-          <span className="text-sm text-muted-foreground">{data.total} total</span>
-        )}
-      </div>
+      <PageHeader
+        title="Clips"
+        meta={
+          data && (
+            <span className="text-sm text-muted-foreground">
+              {data.total} total
+            </span>
+          )
+        }
+      />
 
       {isError && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
@@ -160,30 +144,38 @@ export function ClipsList() {
         </div>
       )}
 
-      <div className="rounded-lg border border-border overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[680px] text-left">
+          <thead className="bg-muted/50 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="px-4 py-3 w-20" aria-label="Preview" />
+              <th className="w-20 px-4 py-3" aria-label="Preview" />
               <th className="px-4 py-3">Filename</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Duration</th>
               <th className="px-4 py-3">Size</th>
               <th className="px-4 py-3">Ingested</th>
-              <th className="px-4 py-3 w-12" aria-label="Actions" />
+              <th className="w-12 px-4 py-3" aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
             {isPending && [...Array(5)].map((_, i) => <SkeletonRow key={i} />)}
             {data?.items.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
-                  No clips yet. Drop a video into <code className="font-mono">inbox/</code> to get started.
+                <td
+                  colSpan={7}
+                  className="px-4 py-12 text-center text-sm text-muted-foreground"
+                >
+                  No clips yet. Drop a video into{" "}
+                  <code className="font-mono">inbox/</code> to get started.
                 </td>
               </tr>
             )}
             {data?.items.map((clip) => (
-              <ClipRow key={clip.id} clip={clip} onClick={() => navigate(`/clips/${clip.id}`)} />
+              <ClipRow
+                key={clip.id}
+                clip={clip}
+                onClick={() => navigate(`/clips/${clip.id}`)}
+              />
             ))}
           </tbody>
         </table>

@@ -1,5 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -71,7 +72,7 @@ function RowShell({
         </div>
       </td>
       <td className="px-4 py-3">{children}</td>
-      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+      <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
         default {String(item.default)}
       </td>
       <td className="px-4 py-3 text-right">
@@ -148,7 +149,7 @@ function NumberRow({ item }: { item: SettingItem }) {
           type="number"
           step={item.type === "integer" ? 1 : "any"}
           value={draft}
-          className="w-32"
+          className="w-28"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && changed && save()}
         />
@@ -174,29 +175,24 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          Tunable parameters. Changes are stored in the database and take effect
-          on the next worker job — no restart needed.
-        </p>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Tunable parameters. Changes are stored in the database and take effect on the next worker job — no restart needed."
+      />
 
       {isError && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
           Failed to load settings.
         </div>
       )}
-      {isPending && (
-        <div className="h-40 rounded-lg bg-muted animate-pulse" />
-      )}
+      {isPending && <div className="h-40 animate-pulse rounded-lg bg-muted" />}
 
       {data &&
         SECTIONS.map((section) => (
           <div key={section.title} className="space-y-2">
             <h2 className="text-base font-semibold">{section.title}</h2>
-            <div className="rounded-lg border border-border overflow-hidden">
-              <table className="w-full text-left">
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[560px] text-left">
                 <tbody>
                   {section.keys.map((key) => {
                     const item = byKey.get(key);

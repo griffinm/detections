@@ -143,7 +143,10 @@ stack's shared services rather than duplicating them.
   (uvicorn; runs `alembic upgrade head` on start) and `docker/web/Dockerfile`
   (Vite build → nginx). The web nginx (`docker/web/nginx.conf`) proxies `/api`
   and `/files` to the `vd-api` container, so the SPA's same-origin relative
-  calls work without CORS.
+  calls work without CORS. The proxy resolves `vd-api` per-request via Docker's
+  embedded DNS (`resolver 127.0.0.11`, hostname via a `set` variable) — a bare
+  hostname in `proxy_pass` is resolved once at startup and cached, so a
+  recreated `vd-api` (new IP) would 502 until nginx reloaded.
 - **Host ports** (LAN only): web `10800`, api `10801`, flower `10802`.
 - **Data** is bind-mounted under `/home/griffin/video-detections/data` on the
   server (same layout as below). The watched inbox is

@@ -37,14 +37,27 @@ and the API. The API never imports task code — it dispatches via
 `celery_app.send_task('vd.ingest_video', …)` (the `api.deps.enqueue` helper) to
 keep its dep tree light.
 
-### `vd.ingest_video(path: str) -> uuid`
-- Compute sha256 of the file.
-- If a `clips` row already exists with that hash, log "already ingested",
-  move file to `processed/`, return the existing id.
-- Otherwise: ffprobe for metadata, insert `clips` row with status=`pending`,
-  schedule `vd.extract_frames` on the `cpu` queue.
+### `vd.ingest_video(path: str, clip_id: uuid | None = None) -> uuid`
 
-Idempotency: hash check. Safe to retry. Failure → status `failed` + reason.
+Two callers: the folder watcher passes only `path` (a watched `inbox/` drop);
+`POST /api/jobs` passes `path` **and** a pre-created `clip_id` (spec 04 §Jobs).
+
+- Compute sha256 of the file.
+- If another `clips` row already exists with that hash:
+  - **Watcher path** (`clip_id is None`) — log "already ingested", move the
+    file to `processed/`, return the existing id.
+  - **Job path** — set this row's `canonical_clip_id` to the existing clip and
+    return; do not extract frames again. The job's result and callback resolve
+    through `canonical_clip_id`; the canonical clip's completion handler fans
+    the callback out to it (see `vd.detect_frame_batch`).
+- Otherwise: ffprobe for metadata. If `clip_id` was supplied, UPDATE that row
+  (status stays `pending`; fill in sha256/size/duration/dimensions/codec);
+  else INSERT a fresh `clips` row (`source='watch'`). Schedule
+  `vd.extract_frames` on the `cpu` queue.
+
+Idempotency: hash check. Safe to retry. Failure → status `failed` + reason; the
+failure handler fires a `clip.failed` callback for any clip with a
+`callback_url` (see Failure handling).
 
 ### `vd.extract_frames(clip_id: uuid)`
 - Set clip status → `extracting`.
@@ -91,9 +104,12 @@ Idempotency: the upsert + a per-frame status make this safely re-runnable.
 - Set per-frame `detect_status='done'`.
 - Publish `frame.detect.done` event to Redis pub/sub.
 - After the batch, if no frame of the clip is still `detect_status='pending'`,
-  set clip status → `done`, publish `clip.done`, and schedule
-  `vd.dedup_clip_frames(clip_id)` on the `cpu` queue. Dedup is an off-critical-
-  path cleanup pass — the clip is `done` regardless of whether/when it runs.
+  set clip status → `done`, publish `clip.done`, schedule
+  `vd.dedup_clip_frames(clip_id)` on the `cpu` queue, and — for this clip *and*
+  every clip whose `canonical_clip_id` points at it — schedule
+  `vd.deliver_callback` on `cpu` for each that has a `callback_url`. Dedup is
+  an off-critical-path cleanup pass — the clip is `done` regardless of whether/
+  when it runs.
 
 GPU streaming: the worker uses a process-level YOLO instance and reads
 frames into a torch tensor in batches. Batching gives a 3-5× throughput
@@ -253,6 +269,25 @@ each affected clip so historical clips get the same treatment as new ones.
   `ondelete=CASCADE` FKs drop frames + detections. Publishes `clip.deleted`.
   Triggered by `DELETE /clips/{id}`. Idempotent — a missing clip is a no-op.
 
+### `vd.deliver_callback(clip_id: uuid, event: str)` *(`cpu` queue)*
+
+Delivers the job result of an externally-submitted clip back to its
+`callback_url`. Scheduled when a clip with a `callback_url` reaches `done` /
+`failed` (and for duplicate clips resolving through `canonical_clip_id`).
+`event` is `clip.done` or `clip.failed`.
+
+- No-op if the clip (resolved through `canonical_clip_id`) has no `callback_url`.
+- Upsert the `webhook_deliveries` row keyed on `(clip_id, event)` (spec 03):
+  snapshot `url`, build `payload` = the spec 04 §Jobs result body.
+- POST `payload` to `url` with a `VD_WEBHOOK_TIMEOUT_SEC` timeout.
+  - `2xx` → `status='delivered'`, record `response_status`.
+  - otherwise → increment `attempts`, record `last_error` / `response_status`,
+    and retry with exponential backoff + jitter up to `VD_WEBHOOK_MAX_ATTEMPTS`;
+    after the last attempt `status='failed'` (terminal — left for manual
+    inspection, no dead-letter routing).
+- Idempotent: keyed on `webhook_deliveries.(clip_id, event)`; a `delivered` row
+  is never re-sent. Retries are the Celery task re-running against that row.
+
 ## Folder watcher (`apps/ingest-watcher`)
 
 Tiny standalone process. Implementation:
@@ -298,15 +333,20 @@ Notes:
   mounts), fall back to a stable-size poll: schedule when size + mtime have
   been unchanged for ~3 seconds.
 - The startup scan handles files that landed while the watcher was down.
+- The watcher schedules only on `inbox_dir`. `intake_dir` — where external
+  apps write videos before calling `POST /api/jobs` — is deliberately **not**
+  watched, so the API call stays the sole trigger for app-submitted videos
+  (spec 02 §External video submission).
 
 ## Idempotency & failure recovery
 
 Each task is idempotent:
-- `ingest_video`: SHA dedup. The source video is moved out of the inbox as
-  the task's *last* step — after the `clips` row is committed and
-  `extract_frames` enqueued. A crash mid-task therefore leaves the file in
-  the inbox for a clean retry; once the file has moved, every prior step has
-  succeeded, so a retry short-circuits on the not-in-inbox check.
+- `ingest_video`: SHA dedup. The source video is moved out of its source
+  directory (`inbox/` for watcher drops, `intake/` for `POST /api/jobs`) as the
+  task's *last* step — after the `clips` row is committed and `extract_frames`
+  enqueued. A crash mid-task therefore leaves the file in place for a clean
+  retry; once the file has moved, every prior step has succeeded, so a retry
+  short-circuits on the not-in-source-dir check.
 - `extract_frames`: upsert on `(clip_id, frame_index)`.
 - `detect_frame_batch`: skip frames whose `detect_status='done'`. Clip
   completion is a single conditional `UPDATE clips SET status='done' WHERE
@@ -328,8 +368,11 @@ Failure handling:
   (where no row may exist yet) is still deferred — see `deferred.md`.
 - Dead-letter queue: failed tasks beyond max_retries are routed to a
   `dead` queue we can inspect via Flower.
+- External jobs: whenever a clip reaches `failed` (or `done`) and has a
+  `callback_url`, `vd.deliver_callback` is scheduled with the matching event so
+  the submitting app is told the outcome — see `vd.deliver_callback` above.
 
-## Configuration knobs (re-stated from plan 02)
+## Configuration knobs (re-stated from spec 02)
 
 - `VD_FRAME_FPS` — sample rate (default 1.0).
 - `VD_DETECTION_MIN_CONFIDENCE` — discard threshold (default 0.25).
@@ -343,6 +386,10 @@ Failure handling:
 - `VD_FRAME_SIMILARITY_THRESHOLD` — int (default 6). Max pHash Hamming
   distance (out of 64) at which two adjacent frames are duplicate candidates.
   Higher = more aggressive pruning.
+- `VD_WEBHOOK_TIMEOUT_SEC` — float (default 10.0). Per-attempt timeout for the
+  `vd.deliver_callback` POST.
+- `VD_WEBHOOK_MAX_ATTEMPTS` — int (default 5). Callback retries before the
+  `webhook_deliveries` row is marked `failed`.
 
 ## Observability
 

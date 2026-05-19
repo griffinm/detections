@@ -170,7 +170,7 @@ params on `/api/labeling/queue`, exposed as two selectors on `/labeling`):
   unreviewed detection of that class; per-frame counts scope to it.
 
 Deferred: **Recent corrections** — frames near recently corrected ones, as a
-kNN over the corrected detection's embedding (`plans/deferred.md`).
+kNN over the corrected detection's embedding (`specs/deferred.md`).
 
 ## Sub-class examples gallery
 

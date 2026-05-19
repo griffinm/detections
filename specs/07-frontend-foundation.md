@@ -1,6 +1,6 @@
 # 07 — Frontend Foundation
 
-The labeling-UI specifics live in plan 08. This one covers the app shell,
+The labeling-UI specifics live in spec 08. This one covers the app shell,
 build setup, theming, routing, and the API integration layer.
 
 ## Stack
@@ -145,7 +145,7 @@ The shell is responsive at the `lg` breakpoint:
 
 Page-level rules: every data table is wrapped in `overflow-x-auto` with a
 `min-w-*` so it scrolls instead of crushing columns on a phone; grids step
-down their column counts; the labeling tool (plan 08) stacks the canvas over
+down their column counts; the labeling tool (spec 08) stacks the canvas over
 tabbed Detections/Classes panels below `lg`.
 
 ### Shared UI primitives
@@ -169,7 +169,7 @@ re-implemented per route:
 | `/clips/:id`                  | Single clip; frame grid; detection counts          |
 | `/clips/:id/frames/:fid`      | Frame viewer (read-only)                           |
 | `/labeling`                   | Review queue (low-confidence / unreviewed)         |
-| `/labeling/:fid`              | Per-frame labeling tool (plan 08)                  |
+| `/labeling/:fid`              | Per-frame labeling tool (spec 08)                  |
 | `/classes`                    | List of classes                                    |
 | `/classes/:id`                | Class detail: sub-classes, examples gallery        |
 | `/models`                     | Model versions, activate                           |

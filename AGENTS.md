@@ -9,28 +9,28 @@ NVIDIA GPU.
 ## Status
 
 **Planning complete; no implementation yet.** The architecture, schema,
-APIs, ML approach, and UI design are specified in `./plans/`. There is no
-code in the repo yet beyond this file. Start with `plans/09-milestones.md`
+APIs, ML approach, and UI design are specified in `./specs/`. There is no
+code in the repo yet beyond this file. Start with `specs/09-milestones.md`
 when picking up work.
 
-## Read the plans first
+## Read the specs first
 
-`./plans/` is the source of truth. Read the relevant plan before working in
-a subsystem, and **update the plan in the same change** when a decision
-shifts. Plans must not silently fall out of sync with code.
+`./specs/` is the source of truth. Read the relevant spec before working in
+a subsystem, and **update the spec in the same change** when a decision
+shifts. Specs must not silently fall out of sync with code.
 
 | File | When to read it |
 |------|-----------------|
-| `plans/00-overview.md`            | Always — architecture, glossary, locked-in decisions |
-| `plans/01-monorepo-and-tooling.md`| Adding/restructuring projects, lint/test config       |
-| `plans/02-infra-and-config.md`    | docker-compose, GPU, env vars, folder layout          |
-| `plans/03-data-model.md`          | Schema changes (always go through Alembic)            |
-| `plans/04-backend-api.md`         | FastAPI routers, schemas, OpenAPI/client codegen      |
-| `plans/05-worker-pipeline.md`     | Celery tasks, ffmpeg, model inference flow            |
-| `plans/06-ml-training.md`         | YOLO/InsightFace/DINOv2, fine-tuning, accuracy semantics |
-| `plans/07-frontend-foundation.md` | Web app shell, theming, routing, API client           |
-| `plans/08-labeling-ui.md`         | Bbox canvas, hotkeys, sub-class examples              |
-| `plans/09-milestones.md`          | Phase sequencing — what to build next                 |
+| `specs/00-overview.md`            | Always — architecture, glossary, locked-in decisions |
+| `specs/01-monorepo-and-tooling.md`| Adding/restructuring projects, lint/test config       |
+| `specs/02-infra-and-config.md`    | docker-compose, GPU, env vars, folder layout          |
+| `specs/03-data-model.md`          | Schema changes (always go through Alembic)            |
+| `specs/04-backend-api.md`         | FastAPI routers, schemas, OpenAPI/client codegen      |
+| `specs/05-worker-pipeline.md`     | Celery tasks, ffmpeg, model inference flow            |
+| `specs/06-ml-training.md`         | YOLO/InsightFace/DINOv2, fine-tuning, accuracy semantics |
+| `specs/07-frontend-foundation.md` | Web app shell, theming, routing, API client           |
+| `specs/08-labeling-ui.md`         | Bbox canvas, hotkeys, sub-class examples              |
+| `specs/09-milestones.md`          | Phase sequencing — what to build next                 |
 
 ## Locked-in stack
 
@@ -52,7 +52,7 @@ shifts. Plans must not silently fall out of sync with code.
 | Auth              | None (single-user, local network)                            |
 | GPU               | Worker container with NVIDIA Container Toolkit               |
 
-If you find yourself reaching for an alternative, update plan 00 with the
+If you find yourself reaching for an alternative, update spec 00 with the
 reason before changing code.
 
 ## Repo conventions (once code exists)
@@ -85,8 +85,8 @@ Aggregates: `nx run-many -t lint typecheck test` (CI gate),
 
 ## Working with this codebase
 
-- For broad questions or refactors that touch multiple plans, propose the
-  plan diff first (which docs change, how), then implement.
+- For broad questions or refactors that touch multiple specs, propose the
+  spec diff first (which docs change, how), then implement.
 - For UI/frontend changes, run the dev server and exercise the feature
   end-to-end — type-check + tests verify code, not feature correctness.
 - Don't add backwards-compatibility shims for things that don't exist yet.

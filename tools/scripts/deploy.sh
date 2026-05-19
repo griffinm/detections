@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Re-deploy to the `layla` server: rsync repo source up, rebuild images, restart.
 # This app has no CI/registry — images are built on the server. See
-# plans/02-infra-and-config.md (§Production deployment).
+# specs/02-infra-and-config.md (§Production deployment).
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -40,9 +40,17 @@ warn "Building images + restarting on ${SSH_HOST} (this can take a while)"
 # namespace — a stale or differently-projected container makes `up` fail with
 # "Conflicting container name". `down` clears the normal case; the `docker rm`
 # fallback catches containers left under a different compose project name.
+#
+# --project-directory pins both the .env lookup and the project name to
+# ~/docker. Without it, `-f compose/video-detections.yml` makes Compose treat
+# compose/ as the project dir: it then looks for .env in ~/docker/compose/
+# (missing → interpolation fails) and names the project `compose` instead of
+# `docker` (mismatching the include-based runs).
+# Expands locally; the literal \$HOME inside expands remotely.
+COMPOSE="docker compose --project-directory \$HOME/docker -f ${COMPOSE_REL}"
 ssh "$SSH_HOST" "cd \$HOME/docker && \
-  docker compose -f ${COMPOSE_REL} build && \
-  docker compose -f ${COMPOSE_REL} down --remove-orphans && \
+  ${COMPOSE} build && \
+  ${COMPOSE} down --remove-orphans && \
   { docker rm -f vd-api vd-web vd-worker-cpu vd-worker-gpu vd-ingest-watcher vd-flower 2>/dev/null || true; } && \
-  docker compose -f ${COMPOSE_REL} up -d"
+  ${COMPOSE} up -d"
 ok "Deploy complete — web :10800  api :10801  flower :10802"

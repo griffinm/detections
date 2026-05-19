@@ -33,7 +33,8 @@ BUILTIN_CLASSES: Sequence[tuple[str, int, str]] = (
 # Everything except `classes`, which holds the seed.
 _MUTABLE_TABLES = (
     "detection_audits", "subclass_examples", "detections", "frames",
-    "clips", "training_runs", "model_versions", "subclasses", "settings_kv",
+    "webhook_deliveries", "clips", "training_runs", "model_versions",
+    "subclasses", "settings_kv",
 )
 
 

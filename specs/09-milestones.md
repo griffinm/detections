@@ -1,6 +1,6 @@
 # 09 — Milestones
 
-This sequences the work in earlier plans into shippable slices. Each phase
+This sequences the work in earlier specs into shippable slices. Each phase
 ends with something demonstrably working end-to-end, not just scaffolding.
 
 Estimates are rough relative units, not calendar time.
@@ -13,7 +13,7 @@ Goal: empty repo → something that boots.
   scaffolded); `apps/api`, `apps/worker`, `apps/ingest-watcher` stubs;
   `libs/python/{db,ml,settings,tasks}` stubs; `libs/ts/{api-client,ui,theme}` stubs.
 - `docker-compose.yml` brings up Postgres (with `pgvector`) and Redis.
-- Alembic initial migration creates all tables (plan 03), seeds builtin classes.
+- Alembic initial migration creates all tables (spec 03), seeds builtin classes.
 - Bootstrap script verifies tools, runs `uv sync`, applies migrations.
 - Pre-commit + ruff + mypy + eslint + prettier configured.
 - API has `/api/system/health` returning DB + Redis OK.
@@ -126,13 +126,13 @@ Goal: surface how well the model is doing over time.
 
 - `GET /api/metrics/accuracy|per-class|calibration|summary|changes` — computed
   on-the-fly. The `daily_metrics` materialized view + nightly refresh is
-  *deferred* (`plans/deferred.md`); plan 06 frames it as a large-dataset step.
+  *deferred* (`specs/deferred.md`); spec 06 frames it as a large-dataset step.
 - Metrics page (`/metrics`):
   - Line chart of top-1 class accuracy per day, per model version.
   - Per-class precision/recall table.
   - Reliability diagram for calibration (with ECE).
   - "What changed?" panel listing recent reassignments.
-- Optional Platt-scaling calibrator — *deferred* (`plans/deferred.md`); the
+- Optional Platt-scaling calibrator — *deferred* (`specs/deferred.md`); the
   calibration diagram ships so miscalibration is visible.
 - Flower exposed at `:5555` for queue inspection.
 
@@ -153,6 +153,30 @@ metrics page shows a clear accuracy story over time and per class.
   ingest → label → metric. Browser E2E (Playwright) was **deferred** — a real
   run needs the full GPU stack, which isn't CI-gateable.
 - Documentation: README + `docs/runbook.md` (ops + troubleshooting).
+
+## Phase 8 — External integration API (M) — ✅ implemented
+
+Goal: two upstream apps (a UniFi Protect motion archiver and a family-video
+archiver) can submit a video and be told who/what is in it.
+
+- New `intake/` directory + `VD_INTAKE_DIR` (spec 02); not watched by
+  `ingest-watcher`.
+- `clips` gains `source` / `external_id` / `callback_url` / `external_metadata`
+  / `canonical_clip_id`; new `webhook_deliveries` table + `delivery_status`
+  enum (spec 03). One Alembic migration.
+- `routers/jobs.py`: `POST /api/jobs` (path-reference submit, idempotent on
+  `(source, external_id)`, intake-path validation) and `GET /api/jobs/{id}`
+  (status + result payload) — spec 04 §Jobs.
+- `vd.ingest_video` accepts a pre-created `clip_id`; SHA-collision on the job
+  path sets `canonical_clip_id` (spec 05).
+- `vd.deliver_callback` task: POSTs the result to `callback_url` on
+  `clip.done` / `clip.failed`, retried + ledgered via `webhook_deliveries`.
+- This is a backend/integration phase — no UI work. The `/clips` page may
+  optionally show the `source` of a clip.
+
+**Done when:** an external app writes a video to `intake/`, calls
+`POST /api/jobs`, and receives a webhook (or polls `GET /api/jobs/{id}`)
+carrying the detections + the who/what roll-up for that clip.
 
 ## Cross-cutting workstreams
 
@@ -182,7 +206,7 @@ Phase 7 is polish — useful but interruptible.
 
 | Risk                                              | Mitigation                                           |
 |---------------------------------------------------|------------------------------------------------------|
-| NVIDIA Container Toolkit setup friction           | Document exact versions in plan 02; provide gpu-check |
+| NVIDIA Container Toolkit setup friction           | Document exact versions in spec 02; provide gpu-check |
 | Catastrophic forgetting during YOLO fine-tune     | Keep COCO examples in mix; mAP regression guard      |
 | Embeddings index growth (millions of detections)  | HNSW handles it; revisit at 10M; pgvector partitioning by class as escape hatch |
 | Frame storage filling the disk                    | `delete_frames_without_objects=true` default + manual purge UI |

@@ -31,7 +31,7 @@ video-detection/
 │   ├── videos/{inbox,processed,failed}/
 │   ├── frames/
 │   └── models/{yolo,insightface,classifiers}/
-├── plans/                                  # this folder
+├── specs/                                  # this folder
 ├── apps/
 │   ├── web/                                # React + Vite + shadcn
 │   ├── api/                                # FastAPI service
@@ -58,7 +58,7 @@ Notes:
   so they get independent dependency trees but all share the libs under
   `libs/python/*` via path dependencies.
 - `libs/ts/api-client` is regenerated from the API's OpenAPI schema on every
-  API change (see plan 04).
+  API change (see spec 04).
 
 ## NX targets (per project)
 
@@ -110,7 +110,7 @@ Each Python project's `pyproject.toml`:
 | TS   | tsc        | `--noEmit` for typecheck target                           |
 | Both | pre-commit | runs ruff, prettier, eslint, mypy --strict on staged libs |
 
-## Testing strategy (covered in detail in later plans)
+## Testing strategy (covered in detail in later specs)
 
 - Python: pytest + pytest-asyncio. ML code that needs GPU is skipped by default
   via `pytest.mark.gpu`; CI runs them only on a GPU runner (or you run locally).

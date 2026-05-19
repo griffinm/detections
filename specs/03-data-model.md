@@ -38,20 +38,35 @@ The original ingested video.
 | error            | text            | if status='failed'                                     |
 | ingested_at      | timestamptz     |                                                        |
 | processed_at     | timestamptz     |                                                        |
+| source           | text NOT NULL DEFAULT 'watch' | origin label: `watch` (folder watcher), `unifi-protect`, `family-archive`, … |
+| external_id      | text            | the submitting app's own record id, for correlation    |
+| callback_url     | text            | webhook target for the job result; NULL → poll-only    |
+| external_metadata| jsonb           | submitter-supplied metadata (e.g. UniFi's own detections) — stored, not interpreted |
+| canonical_clip_id| uuid REFERENCES clips(id) ON DELETE SET NULL | set iff this clip's bytes duplicate an earlier clip; job results resolve through it |
 
 ```sql
 CREATE TYPE clip_status AS ENUM
   ('pending','extracting','detecting','done','failed');
 ```
 
-Indexes: `(status)`, `(ingested_at DESC)`.
+Indexes: `(status)`, `(ingested_at DESC)`,
+`(source, external_id) WHERE external_id IS NOT NULL`.
+
+The last five columns support **external job submission** (spec 04 §Jobs). A
+folder-watcher drop leaves them at their defaults (`source='watch'`, the rest
+NULL). `POST /api/jobs` is idempotent on `(source, external_id)` — a re-submit
+returns the existing clip rather than creating a duplicate. `source` is free
+text, not an enum, so a new integration needs no migration. `canonical_clip_id`
+handles the rarer case of *identical bytes* arriving as a fresh job: SHA dedup
+in `vd.ingest_video` sets it to the earlier clip, marks this row `done`, and
+the job result + callback serve the canonical clip's detections.
 
 ### `frames`
 
 One row per extracted JPEG. A frame is set `kept=false` in two cases: it has
 no detection above `detection_min_confidence` (per the requirement), or it is
 a near-duplicate of an adjacent frame collapsed by `vd.dedup_clip_frames`
-(plan 05). In both cases the JPEG on disk is then unlinked — subject to
+(spec 05). In both cases the JPEG on disk is then unlinked — subject to
 `delete_frames_without_objects` for the empty-frame case, unconditionally for
 the duplicate case.
 
@@ -64,7 +79,7 @@ the duplicate case.
 | path          | text         | NULL once pruned                                     |
 | width         | int NOT NULL |                                                      |
 | height        | int NOT NULL |                                                      |
-| phash         | bytea        | 64-bit perceptual hash; near-dup pruning (`vd.dedup_clip_frames`, plan 05). NULL on pre-feature frames until `vd.backfill_frame_phash` runs |
+| phash         | bytea        | 64-bit perceptual hash; near-dup pruning (`vd.dedup_clip_frames`, spec 05). NULL on pre-feature frames until `vd.backfill_frame_phash` runs |
 | kept          | bool NOT NULL DEFAULT true | false → frame is out of the working set (no objects, or a near-duplicate); its JPEG is then unlinked per the prune rules |
 | detect_status | detect_status NOT NULL DEFAULT 'pending'  | enum                    |
 
@@ -235,7 +250,7 @@ Pre-aggregated metrics, broken out per class, per model_version, per day:
 - sub-class top-1 accuracy
 - mean confidence at correctness buckets (for calibration)
 
-Schema details are in plan 06.
+Schema details are in spec 06.
 
 ### `settings_kv`
 
@@ -248,6 +263,37 @@ app restart:
 Examples: `frame_fps`, `detection_min_confidence`,
 `custom_class_finetune_threshold`. These shadow the values in `.env`; the
 DB takes precedence if present. Surfaced via the `/settings` API.
+
+### `webhook_deliveries`
+
+The outbound-callback ledger for external jobs. One row per `(clip, event)`
+delivery attempt-set — created when a clip with a `callback_url` reaches a
+terminal status, worked by `vd.deliver_callback` (spec 05). Persisting it
+means a delivery survives a worker restart and is inspectable when a submitter
+claims it never heard back.
+
+| Column          | Type     | Notes                                                 |
+|-----------------|----------|-------------------------------------------------------|
+| id              | uuid PK  |                                                       |
+| clip_id         | uuid NOT NULL REFERENCES clips(id) ON DELETE CASCADE | |
+| url             | text NOT NULL | snapshot of `clips.callback_url` at enqueue time |
+| event           | text NOT NULL | `clip.done` or `clip.failed`                     |
+| status          | delivery_status NOT NULL DEFAULT 'pending' | enum               |
+| attempts        | int NOT NULL DEFAULT 0  |                                       |
+| last_attempt_at | timestamptz |                                                   |
+| response_status | int      | HTTP status of the most recent attempt               |
+| last_error      | text     | transport error / non-2xx body of the last attempt   |
+| payload         | jsonb NOT NULL | the result body sent (spec 04 §Jobs result shape) |
+| created_at      | timestamptz NOT NULL DEFAULT now() |                         |
+| updated_at      | timestamptz NOT NULL DEFAULT now() |                         |
+
+```sql
+CREATE TYPE delivery_status AS ENUM ('pending','delivered','failed');
+```
+
+Indexes: `(clip_id)`, `(status) WHERE status = 'pending'` (the retry sweep).
+`status='failed'` is terminal — set once `attempts` reaches
+`VD_WEBHOOK_MAX_ATTEMPTS`.
 
 ## Migrations (Alembic)
 
@@ -270,6 +316,9 @@ clips ─┬───< frames ─┬───< detections >─── classes
        │             │         └─── subclass_examples
        │             │
        │             └─── (file on disk)
+       │
+       ├───< webhook_deliveries   (external-job callbacks)
+       ├─── canonical_clip_id ──> clips   (self-FK, dedup)
        │
        └─── status, sha256 unique
 

@@ -11,7 +11,7 @@
 - Configuration via `libs/python/settings.Settings`.
 
 The API does NOT enqueue heavy work itself — it writes to the DB and pushes
-Celery tasks to Redis. The worker plan (05) covers task semantics.
+Celery tasks to Redis. The worker spec (05) covers task semantics.
 
 ## Project layout
 
@@ -25,6 +25,7 @@ apps/api/
 │       ├── deps.py                    # dependencies (db session, settings)
 │       ├── routers/
 │       │   ├── clips.py
+│       │   ├── jobs.py                  # external video submission + result
 │       │   ├── frames.py
 │       │   ├── detections.py
 │       │   ├── classes.py
@@ -59,7 +60,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from .deps import settings, engine
-from .routers import (clips, frames, detections, classes, subclasses,
+from .routers import (clips, jobs, frames, detections, classes, subclasses,
                       labeling, models, metrics, settings as settings_r,
                       system, stream)
 
@@ -72,7 +73,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="video-detection", lifespan=lifespan)
     app.mount("/files/frames", StaticFiles(directory=settings.frames_dir), name="frames")
-    for r in (clips, frames, detections, classes, subclasses, labeling,
+    for r in (clips, jobs, frames, detections, classes, subclasses, labeling,
               models, metrics, settings_r, system, stream):
         app.include_router(r.router, prefix="/api")
     return app
@@ -115,6 +116,86 @@ All paths prefixed with `/api`. Pagination is cursor-based (`?cursor=…&limit=�
 - `POST /clips/{id}/reprocess` — re-enqueue `detect_frame` for all kept frames
   using the active model.
 
+### Jobs *(external integration — see spec 02 §External video submission)*
+
+The app-to-app surface for the two upstream apps (UniFi Protect motion
+archiver, family-video archiver). They run on the same host and share the
+`data/` mount, so videos pass **by path reference**, never as HTTP bodies.
+
+- `POST /api/jobs` — submit a video already written under `VD_INTAKE_DIR`.
+  Body:
+  ```json
+  {
+    "source": "unifi-protect",
+    "external_id": "evt_8842",
+    "video_path": "/data/videos/intake/evt_8842.mp4",
+    "callback_url": "http://unifi-archiver:9000/hooks/vd",   // optional
+    "metadata": { "trigger": "person", "zone": "driveway" }   // optional
+  }
+  ```
+  The handler: (1) `realpath`-validates `video_path` resolves inside
+  `VD_INTAKE_DIR` — a `..` escape or a missing file is `422`; (2) if
+  `external_id` is given and a clip with `(source, external_id)` already
+  exists, returns it unchanged (idempotent re-submit); (3) otherwise inserts a
+  `clips` row — `status='pending'`, generated UUIDv7, `source`/`external_id`/
+  `callback_url` set, `external_metadata = metadata`; (4) enqueues
+  `vd.ingest_video` on the `cpu` queue with the new `clip_id`. Returns
+  `202 { "job_id", "status": "pending" }`. It never blocks on processing —
+  this honours the "API does no heavy work" rule (even the SHA hash is left to
+  the worker; the API path's idempotency key is `(source, external_id)`).
+- `GET /api/jobs/{id}` — job status + result. `status` mirrors `clip_status`:
+  `pending|extracting|detecting` = in-flight, `done|failed` = terminal. On a
+  terminal status the body carries the full result payload (below). Resolves
+  through `canonical_clip_id` when the submitted bytes deduped onto an earlier
+  clip.
+
+The job **is** the clip — there is no separate `jobs` table, `job_id == clip_id`.
+`/api/jobs` is just the external-facing projection of a clip: submit-shaped in,
+result-shaped out. The folder watcher and `POST /api/jobs` converge on the same
+`vd.ingest_video` pipeline.
+
+**Result payload** — the body of `GET /api/jobs/{id}` when terminal, and the
+webhook body posted by `vd.deliver_callback` (spec 05):
+```json
+{
+  "job_id": "...", "clip_id": "...",
+  "source": "unifi-protect", "external_id": "evt_8842",
+  "status": "done",
+  "clip": { "duration_sec": 8.0, "width": 1920, "height": 1080 },
+  "detections": [
+    { "class": "person", "subclass": "Mallory",
+      "confidence_class": 0.93, "confidence_subclass": 0.81,
+      "frame_index": 4, "timestamp_sec": 4.0,
+      "bbox": {"x":0.1,"y":0.2,"w":0.2,"h":0.5} }
+  ],
+  "summary": {
+    "classes":    [ { "class": "person", "frames": 7 } ],
+    "subclasses": [ { "class": "person", "subclass": "Mallory",
+                      "frames": 6, "best_confidence": 0.91 } ]
+  }
+}
+```
+- `detections` — per-box detail over **live (non-deleted) detections on kept
+  frames**; the UniFi archiver consumes this.
+- `summary` — the "who/what appeared in this clip" roll-up; the family archiver
+  consumes this.
+- Computed on-the-fly from `detections`/`frames`, like `/metrics` — there is no
+  stored job-result table. It therefore reflects the *current* labels: if a
+  human later re-reviews the clip, a subsequent `GET /api/jobs/{id}` changes.
+  The webhook payload is the snapshot frozen at `clip.done`.
+- On `status='failed'`, `error` is set and `clip`/`detections`/`summary` are
+  omitted.
+
+UniFi Protect supplies its *own* object detections in `metadata`; we store them
+in `external_metadata` and do **not** ingest them as `detections` rows — mixing
+detection sources would pollute the `detection_audits` accuracy ledger. Our
+sub-class recognition is the value-add.
+
+No auth (the system's standing posture — single-user LAN). A shared-secret
+header on `POST /api/jobs` + `callback_url` is a sensible future hardening if
+these apps ever leave the trusted network — out of scope while everything is
+same-host LAN.
+
 ### Frames
 - `GET /clips/{id}/frames?kept=true` — paginated.
 - `GET /frames/{id}` — detail incl. detections (soft-deleted ones excluded).
@@ -156,7 +237,7 @@ All paths prefixed with `/api`. Pagination is cursor-based (`?cursor=…&limit=�
   `confidence_class` first) | `unreviewed` (newest frame first). The optional
   `class_id` filters to frames with an unreviewed detection of that class and
   scopes the per-frame counts to it. The kNN `recent corrections` strategy is
-  deferred (`plans/deferred.md`). The UI holds the returned ordering for
+  deferred (`specs/deferred.md`). The UI holds the returned ordering for
   keyboard (`J`/`K`) navigation.
 
 ### Models + training
@@ -187,7 +268,7 @@ All paths prefixed with `/api`. Pagination is cursor-based (`?cursor=…&limit=�
 ### System *(Phase 7 — `disk`/`purge-frames` implemented)*
 - `GET /system/health` — DB+Redis+models reachable?
 - `GET /system/queue` — celery queue depths via `inspect`. *Deferred* — Flower
-  (`:5555`) already covers queue inspection (`plans/deferred.md`).
+  (`:5555`) already covers queue inspection (`specs/deferred.md`).
 - `GET /system/disk` — per-directory bytes/file-count + total/free disk.
 - `POST /system/purge-frames` — body `{older_than_days}`; enqueues `vd.purge_frames`.
 

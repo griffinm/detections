@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # storage
     inbox_dir: Path = Path("/data/videos/inbox")
+    intake_dir: Path = Path("/data/videos/intake")
     processed_dir: Path = Path("/data/videos/processed")
     failed_dir: Path = Path("/data/videos/failed")
     frames_dir: Path = Path("/data/frames")
@@ -53,6 +54,10 @@ class Settings(BaseSettings):
     # near-duplicate frame pruning
     prune_similar_frames: bool = True
     frame_similarity_threshold: int = 6
+
+    # external job submission (POST /api/jobs callbacks)
+    webhook_timeout_sec: float = 10.0
+    webhook_max_attempts: int = 5
 
 
 # Settings the owner may retune at runtime via the settings_kv table (the

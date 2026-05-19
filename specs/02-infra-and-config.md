@@ -152,6 +152,12 @@ stack's shared services rather than duplicating them.
   compose/video-detections.yml build`) — this app has no CI/registry pipeline,
   unlike the other apps in the stack. Redeploy = rsync repo source up, rebuild,
   `docker compose up -d`.
+- **`--project-directory ~/docker` is required** for the standalone `-f
+  compose/video-detections.yml` invocations in `deploy.sh`. Otherwise Compose
+  treats `compose/` as the project dir, looks for `.env` in `~/docker/compose/`
+  (missing → `VIDEO_DETECTION_DB_PASSWORD` interpolation fails) and names the
+  project `compose` instead of `docker`. The `include:`-based runs from the
+  parent `docker-compose.yml` are unaffected.
 
 ## Worker Dockerfile (multi-stage)
 
@@ -246,7 +252,9 @@ Notes:
 ```
 data/
 ├── videos/
-│   ├── inbox/          # drop zone (watched)
+│   ├── inbox/          # drop zone (watched by ingest-watcher)
+│   ├── intake/         # external apps write here, then call POST /api/jobs
+│   │                   #   — NOT watched; the API call is the sole trigger
 │   ├── processed/      # moved here on success
 │   └── failed/         # moved here on permanent failure
 ├── frames/
@@ -267,6 +275,27 @@ The GPU worker container sets `INSIGHTFACE_HOME=/data/models/insightface` and
 `HF_HOME=/data/models/hf` so InsightFace and DINOv2 weights download once onto
 the mounted `models/` volume rather than on every container start.
 
+## External video submission
+
+Two upstream apps (a UniFi Protect motion archiver and a family-video archiver)
+feed this system video to be told *who/what is in it*. They run on the same
+host and share the `data/` mount, so videos are passed **by path reference, not
+over HTTP**:
+
+1. The upstream app writes the file under `intake/` (`VD_INTAKE_DIR`).
+2. It calls `POST /api/jobs` with the path plus correlation metadata
+   (see spec 04 §Jobs).
+3. The API validates the path is inside `VD_INTAKE_DIR`, creates the `clips`
+   row, and enqueues `vd.ingest_video` — the same pipeline a watched-folder
+   drop runs.
+4. On `clip.done`/`clip.failed`, `vd.deliver_callback` POSTs the detection
+   result to the job's `callback_url` (spec 05); apps without a webhook poll
+   `GET /api/jobs/{id}`.
+
+`intake/` is deliberately **not** watched by `ingest-watcher`: if it were, the
+watcher would race the API and create a second, metadata-less `clips` row for
+the same file. `inbox/` stays the watched path for manual/ad-hoc drops.
+
 ## Configuration (`.env` + pydantic-settings)
 
 A `libs/python/settings` package exposes a `Settings` model loaded once per
@@ -283,6 +312,7 @@ class Settings(BaseSettings):
 
     # storage
     inbox_dir: Path = Path("/data/videos/inbox")
+    intake_dir: Path = Path("/data/videos/intake")
     processed_dir: Path = Path("/data/videos/processed")
     failed_dir: Path = Path("/data/videos/failed")
     frames_dir: Path = Path("/data/frames")
@@ -310,6 +340,10 @@ class Settings(BaseSettings):
     # delete vs retain
     delete_processed_videos: bool = False       # if true, remove from /processed on cleanup
     delete_frames_without_objects: bool = True  # if true, prune empty frames' files
+
+    # external job submission (spec 04 §Jobs, spec 05 vd.deliver_callback)
+    webhook_timeout_sec: float = 10.0           # per-attempt POST timeout
+    webhook_max_attempts: int = 5               # retries before delivery is 'failed'
 ```
 
 The same `.env` is loaded by both the host-run API and the containerized
@@ -322,6 +356,7 @@ worker. The compose file maps it in via `env_file`.
 | `VD_DATABASE_URL`                  | `postgresql+asyncpg://vd:vd@…`         |                                       |
 | `VD_REDIS_URL`                     | `redis://localhost:6379/0`             |                                       |
 | `VD_INBOX_DIR`                     | `/data/videos/inbox`                   | watched folder                        |
+| `VD_INTAKE_DIR`                    | `/data/videos/intake`                  | allowed root for `POST /api/jobs` paths; not watched |
 | `VD_FRAMES_DIR`                    | `/data/frames`                         |                                       |
 | `VD_MODELS_DIR`                    | `/data/models`                         |                                       |
 | `VD_FRAME_FPS`                     | `1.0`                                  | sampling rate                         |
@@ -330,8 +365,10 @@ worker. The compose file maps it in via `env_file`.
 | `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD`| `100`                                 | labels needed to trigger fine-tune    |
 | `VD_DELETE_FRAMES_WITHOUT_OBJECTS` | `true`                                 | requirement says discard empties      |
 | `VD_DETECT_BATCH_SIZE`             | `16`                                   | frames per `vd.detect_frame_batch` task |
-| `VD_PRUNE_SIMILAR_FRAMES`          | `true`                                 | enable `vd.dedup_clip_frames` (plan 05) |
+| `VD_PRUNE_SIMILAR_FRAMES`          | `true`                                 | enable `vd.dedup_clip_frames` (spec 05) |
 | `VD_FRAME_SIMILARITY_THRESHOLD`    | `6`                                    | max pHash Hamming distance for a dup   |
+| `VD_WEBHOOK_TIMEOUT_SEC`           | `10.0`                                 | per-attempt callback POST timeout      |
+| `VD_WEBHOOK_MAX_ATTEMPTS`          | `5`                                    | callback retries before giving up      |
 
 ## GPU sanity check
 

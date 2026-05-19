@@ -70,7 +70,7 @@ data/
   videos/          inbox/ processed/ failed/
   frames/          Extracted JPEGs per clip
   models/          YOLO, InsightFace, classifier weights
-plans/             Architecture decisions (source of truth)
+specs/             Architecture decisions (source of truth)
 ```
 
 ## Quality gate

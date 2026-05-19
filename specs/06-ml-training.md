@@ -1,6 +1,6 @@
 # 06 — ML & Training
 
-This plan covers what runs on the GPU and how it gets smarter over time.
+This spec covers what runs on the GPU and how it gets smarter over time.
 
 ## Models
 
@@ -29,7 +29,7 @@ zero training cost but is noisy at the boundaries and slow at scale. A
 small logistic regression on the same embeddings is faster, calibrated,
 and trivially retrainable.
 
-## Detection pipeline (model side of plan 05)
+## Detection pipeline (model side of spec 05)
 
 ```
 JPEG → preprocess (letterbox to 960) → YOLO predict (conf>=0.25, iou=0.45)
@@ -181,7 +181,7 @@ This is exposed through `/api/metrics/accuracy?bucket=day`.
 **Status (Phase 6):** the `/api/metrics/*` endpoints compute these roll-ups
 **on-the-fly** with GROUP BY queries — instant at single-user scale. The
 `daily_metrics` materialized view + nightly Celery-beat refresh below is
-**deferred** (see `plans/deferred.md`); adopt it only when the `detections`
+**deferred** (see `specs/deferred.md`); adopt it only when the `detections`
 table grows large enough that the live queries lag.
 
 For larger datasets, materialize the daily roll-up:

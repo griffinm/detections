@@ -1,7 +1,7 @@
 """Training runs — create (which dispatches a Celery task) + list + detail.
 
 The API only writes the `training_runs` row and enqueues the task on the
-`train` queue; the worker does the actual training (plan 05).
+`train` queue; the worker does the actual training (spec 05).
 """
 
 import uuid

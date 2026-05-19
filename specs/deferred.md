@@ -5,7 +5,7 @@ features that were planned but cut from a phase's scope, plus known tech debt.
 Each entry says *what*, *why it was deferred*, and *where it would live*.
 
 When you pick one of these up: implement it, then delete its entry here and
-tick the relevant plan doc.
+tick the relevant spec doc.
 
 ## Worker / ML
 
@@ -21,7 +21,7 @@ tick the relevant plan doc.
   import …` into the task bodies (and/or lazy `vd_ml/__init__.py`), so the
   `cpu` image can drop the ML stack. *Where:* `apps/worker/src/worker/tasks/*`,
   `apps/worker/src/worker/models.py`, `libs/python/ml/src/vd_ml/__init__.py`.
-  (plan 02/05)
+  (spec 02/05)
 
 - **`vd.backfill_detections`** — re-run detection over historical kept frames
   against a newly activated model (incl. an `auto_backfill_on_new_model`
@@ -33,24 +33,26 @@ tick the relevant plan doc.
 - **Per-class mAP regression guard** in `vd.finetune_yolo` — only the global
   aggregate guard (`mAP50-95 ≥ prev − 0.01`) is implemented. *Why:* Phase 5
   kept the guard simple. *Where:* `apps/worker/src/worker/tasks/finetune_yolo.py`
-  — needs per-class val metrics out of Ultralytics. (plan 06)
+  — needs per-class val metrics out of Ultralytics. (spec 06)
 
 - **Per-class oversampling** in the YOLO dataset builder — a 100-label custom
   class is swamped by thousands of COCO labels. *Why:* not needed for the
-  first custom class. *Where:* `apps/worker/src/worker/dataset.py`. (plan 06)
+  first custom class. *Where:* `apps/worker/src/worker/dataset.py`. (spec 06)
 
 - **Hard-negative mining** for sub-class assignment — feed rejected kNN matches
   (rejection audits) into the classifier as negatives at retrain. *Where:*
-  `train_subclass_classifier`. (plan 06 open question)
+  `train_subclass_classifier`. (spec 06 open question)
 
-- **`status='failed'` clip row for ingest failures** — `vd.ingest_video` now
-  quarantines a permanently-failing source video to `failed/` so the inbox
-  watcher stops looping on it, but writes no `clips` row (ingest may fail
-  before any row exists, e.g. a corrupt file that breaks `ffprobe`). A failed
-  ingest is therefore invisible in the UI. *Why:* needs a place to surface
-  row-less failures — either a synthetic `clips` row keyed on the file SHA or
-  a separate `ingest_failures` table. *Where:*
-  `apps/worker/src/worker/tasks/ingest.py`. (plan 05)
+- **`status='failed'` clip row for *watcher-path* ingest failures** — a
+  permanently-failing `POST /api/jobs` submission is now marked `failed` on its
+  (API-created) `clips` row by `ingest._mark_job_failed`, which also fires the
+  `clip.failed` callback. A *watcher* drop still has no row when ingest fails
+  before one exists (e.g. a corrupt file that breaks `ffprobe`);
+  `vd.ingest_video` only quarantines the file to `failed/`, so a failed watcher
+  ingest stays invisible in the UI. *Why:* needs a place to surface row-less
+  failures — a synthetic `clips` row keyed on the file SHA or a separate
+  `ingest_failures` table. *Where:*
+  `apps/worker/src/worker/tasks/ingest.py`. (spec 05)
 
 ## Metrics & observability
 
@@ -58,13 +60,13 @@ tick the relevant plan doc.
   computed on-the-fly, which is instant at single-user scale. At larger scale,
   materialize the daily roll-up. *Needs:* an Alembic migration creating the
   `MATERIALIZED VIEW`, a Celery-beat process (a new `docker-compose` service),
-  and a `vd.refresh_daily_metrics` task (nightly + after retrains). (plan 03/06)
+  and a `vd.refresh_daily_metrics` task (nightly + after retrains). (spec 03/06)
 
 - **Platt-scaling calibrator** for YOLO confidence scores — Phase 6 ships the
   calibration *diagram* (ECE + reliability plot) so miscalibration is visible,
   but not the fitter. *Where:* fit on reviewed scores, store as a
   `model_versions` row (`kind='classifier'`, `target_class_id=NULL`), apply as
-  a post-processing step in `detect_frame_batch`. (plan 06)
+  a post-processing step in `detect_frame_batch`. (spec 06)
 
 - **Detector precision/recall metrics (false-positive rate)** — `/metrics`
   measures *classification* accuracy over reviewed, non-deleted, model-produced
@@ -76,12 +78,12 @@ tick the relevant plan doc.
   (user-drawn `source='user'` boxes) as false negatives, to derive detector
   precision/recall alongside the existing classification accuracy. *Where:*
   `apps/api/src/api/routers/metrics.py`; the signal already exists in
-  `detection_audits` + `detections.deleted_at`/`source`. (plan 06)
+  `detection_audits` + `detections.deleted_at`/`source`. (spec 06)
 
 - **`GET /api/system/queue`** endpoint — Celery queue depths via `inspect`, and
   a **`vd.heartbeat`** periodic task writing worker liveness to Redis. *Why:*
   Flower (`:5555`) already covers live queue inspection. *Where:*
-  `apps/api/src/api/routers/system.py` + a beat-scheduled task. (plan 04/05)
+  `apps/api/src/api/routers/system.py` + a beat-scheduled task. (spec 04/05)
 
 ## Labeling UI
 
@@ -90,7 +92,7 @@ tick the relevant plan doc.
   that detection's embedding. *Why:* the `lowconf`, `unreviewed`, and
   class-targeted strategies shipped; this one needs a similarity query seeded
   from a correction and is disproportionately large. *Where:*
-  `apps/api/src/api/routers/labeling.py`. (plan 08)
+  `apps/api/src/api/routers/labeling.py`. (spec 08)
 
 ## Testing
 
@@ -98,7 +100,7 @@ tick the relevant plan doc.
   (`apps/api/tests/test_smoke_pipeline.py`) instead. A faithful browser E2E of
   ingest → label → metric needs the full stack incl. a GPU + ffmpeg, which is
   slow and not CI-gateable. *Where:* a new `apps/web` `e2e` target +
-  `playwright.config.ts`. (plan 09)
+  `playwright.config.ts`. (spec 09)
 
 ## Tooling & CI debt
 

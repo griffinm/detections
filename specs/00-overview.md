@@ -1,6 +1,6 @@
 # 00 — System Overview
 
-This is the top-level plan. The numbered companion plans (01–09) drill into each
+This is the top-level spec. The numbered companion specs (01–09) drill into each
 subsystem. Read this one first; the others assume its vocabulary and assumptions.
 
 ## Goal
@@ -74,11 +74,19 @@ Single user, single GPU, single host. No multi-tenancy, no cloud auth.
 Frames are written to disk and served as static files; metadata + detections +
 embeddings live in Postgres.
 
+Beyond the watched folder, two upstream apps (a UniFi Protect motion archiver
+and a family-video archiver) submit videos programmatically via `POST /api/jobs`
+and receive the detection result back — by webhook callback or by polling
+`GET /api/jobs/{id}`. They run on the same host and share the `data/` mount, so
+videos are passed by path reference, not over HTTP. See spec 02 §External video
+submission and spec 04 §Jobs.
+
 ## Data lifecycle
 
-1. **Drop**: a video lands in `/data/videos/inbox/`.
-2. **Ingest**: watchdog enqueues `ingest_video`, which probes with ffprobe and
-   inserts a `clips` row (status=`pending`). Idempotent by content hash.
+1. **Drop**: a video lands in `/data/videos/inbox/` (watched folder) — or an
+   upstream app writes it to `/data/videos/intake/` and calls `POST /api/jobs`.
+2. **Ingest**: `ingest_video` probes with ffprobe and inserts/fills a `clips`
+   row (status=`pending`). Idempotent by content hash.
 3. **Extract**: `extract_frames` runs ffmpeg at 1 FPS, writes JPEGs under
    `/data/frames/<clip_id>/`, inserts a `frames` row per frame.
 4. **Detect**: `detect_frame` runs YOLO on each frame; produces `detections`.
@@ -98,8 +106,11 @@ embeddings live in Postgres.
      linear-on-embeddings classifier.
 9. **Cleanup**: original video can be moved to `/data/videos/processed/` (or
    deleted by the user); frames stay until the user purges them.
+10. **Callback** (jobs only): when a clip submitted via `POST /api/jobs`
+    finishes, `deliver_callback` POSTs the detection result to the job's
+    `callback_url`, if one was given.
 
-## Plan index
+## Spec index
 
 - [01 — Monorepo & tooling](./01-monorepo-and-tooling.md) — NX layout, UV,
   shared libs, lint/test/CI.
@@ -134,8 +145,11 @@ embeddings live in Postgres.
   of a sub-class, used as a kNN reference.
 - **Ground truth**: a detection's user-confirmed state. Distinct from the
   model's original prediction, which we keep around for accuracy tracking.
+- **Job**: a clip submitted by an upstream app via `POST /api/jobs` (rather
+  than the watched folder). Not a separate entity — `job_id == clip_id`; the
+  term names the external-facing submit/result view of a clip.
 
-## Open questions (deferred — sensible defaults will go in the plans)
+## Open questions (deferred — sensible defaults will go in the specs)
 
 - **Discard threshold**: "no objects" = max detection confidence < 0.25 across
   all active classes. Default 0.25; user-tunable.

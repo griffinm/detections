@@ -59,6 +59,11 @@ AuditReason = Enum(
     name="audit_reason",
 )
 
+DeliveryStatus = Enum(
+    "pending", "delivered", "failed",
+    name="delivery_status",
+)
+
 
 # ---------------------------------------------------------------------------
 # Tables
@@ -111,7 +116,10 @@ class Clip(Base, UUIDPKMixin, TimestampMixin):
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     original_path: Mapped[str] = mapped_column(Text, nullable=False)
     final_path: Mapped[str | None] = mapped_column(Text)
-    sha256: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # Nullable: an externally-submitted job (POST /api/jobs) creates the row
+    # before the file is hashed — the worker fills sha256 in during ingest.
+    # Postgres lets a UNIQUE column hold multiple NULLs, so dedup still holds.
+    sha256: Mapped[str | None] = mapped_column(Text, unique=True)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     duration_sec: Mapped[float | None] = mapped_column(Numeric(10, 3))
     fps: Mapped[float | None] = mapped_column(Numeric(6, 3))
@@ -124,6 +132,17 @@ class Clip(Base, UUIDPKMixin, TimestampMixin):
     error: Mapped[str | None] = mapped_column(Text)
     ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # External job submission (spec 04 §Jobs). 'watch' for folder-watcher drops.
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="watch")
+    external_id: Mapped[str | None] = mapped_column(Text)
+    callback_url: Mapped[str | None] = mapped_column(Text)
+    external_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Set when this clip's bytes duplicate an earlier clip; job results and
+    # callbacks resolve through it. Self-FK, SET NULL so deleting the canonical
+    # clip never orphans-cascade this row away.
+    canonical_clip_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clips.id", ondelete="SET NULL")
+    )
 
     frames: Mapped[list["Frame"]] = relationship(back_populates="clip")
 
@@ -258,3 +277,30 @@ class SettingsKV(Base):
 
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     value: Mapped[Any] = mapped_column(JSONB, nullable=False)
+
+
+class WebhookDelivery(Base, UUIDPKMixin, TimestampMixin):
+    """Outbound-callback ledger for externally-submitted jobs (spec 03).
+
+    One row per `(clip_id, event)` — `vd.deliver_callback` upserts on that key,
+    so a redelivered event is the same row and a `delivered` row is never
+    re-sent. Persisting it survives a worker restart and is inspectable when a
+    submitter claims it never heard back.
+    """
+
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (UniqueConstraint("clip_id", "event"),)
+
+    clip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clips.id", ondelete="CASCADE"), nullable=False
+    )
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    event: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        DeliveryStatus, nullable=False, server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

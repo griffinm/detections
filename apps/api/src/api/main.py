@@ -11,6 +11,7 @@ from .routers import (
     clips,
     detections,
     frames,
+    jobs,
     labeling,
     metrics,
     models,
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
 
     for router in (
         clips,
+        jobs,
         frames,
         detections,
         classes,

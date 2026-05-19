@@ -2,7 +2,7 @@
 
 Day-to-day operation and troubleshooting for a single-host, single-GPU
 video-detection deployment. For architecture and design rationale see
-`plans/`; for setup see `README.md`.
+`specs/`; for setup see `README.md`.
 
 ## Services
 
@@ -85,7 +85,7 @@ This rsyncs the repo source to `layla:/home/griffin/video-detections`,
 installs `docker/server-compose.yml` as `~/docker/compose/video-detections.yml`,
 then rebuilds and `up -d`. The `vd-api` container runs `alembic upgrade head`
 on start, so migrations need no manual step. `data/` is excluded from the
-rsync — it is bind-mounted server state. See `plans/02-infra-and-config.md`
+rsync — it is bind-mounted server state. See `specs/02-infra-and-config.md`
 (§Production deployment).
 
 ## Monitoring
@@ -102,7 +102,7 @@ rsync — it is bind-mounted server state. See `plans/02-infra-and-config.md`
 |---------|--------------|-----|
 | Clip stuck in `pending` / `extracting` | cpu worker down, or no ffmpeg in the container | Check `worker-cpu` is up; confirm ffmpeg installed |
 | Clip stuck in `detecting` | gpu worker down, or GPU unavailable | `nx run worker:gpu-check`; check `worker-gpu` logs |
-| `torch.cuda.is_available()` is false | NVIDIA Container Toolkit / `runtime: nvidia` missing | See `plans/02-infra-and-config.md`; `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` |
+| `torch.cuda.is_available()` is false | NVIDIA Container Toolkit / `runtime: nvidia` missing | See `specs/02-infra-and-config.md`; `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` |
 | Settings change has no effect | reading a job that started before the edit | Overrides apply to the *next* task — wait for the next job |
 | Disk filling up | frames not pruned | Lower retention via `/settings`; purge from `/system` |
 | Queue backlog grows | a fine-tune is starving inference | Fine-tunes run on the `train` queue; let it finish or scale the gpu worker |
@@ -115,5 +115,5 @@ rsync — it is bind-mounted server state. See `plans/02-infra-and-config.md`
 nx run-many -t lint typecheck test
 ```
 
-Known pre-existing gaps in this aggregate are tracked in `plans/deferred.md`
+Known pre-existing gaps in this aggregate are tracked in `specs/deferred.md`
 (Tooling & CI debt).

@@ -129,6 +129,23 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
                 finished.append(clip_id)
         await session.commit()
 
+        # External-job callbacks (spec 04 §Jobs): a finished clip submitted via
+        # POST /api/jobs needs its result delivered, and so does any clip whose
+        # bytes deduped onto it. Duplicate clips share the canonical clip's
+        # lifecycle, so flip them to `done` here too.
+        callback_targets: list[uuid.UUID] = []
+        for clip_id in finished:
+            main = await session.get(Clip, clip_id)
+            if main is not None and main.callback_url:
+                callback_targets.append(clip_id)
+            for dup in await session.scalars(
+                select(Clip).where(Clip.canonical_clip_id == clip_id)
+            ):
+                dup.status = "done"
+                if dup.callback_url:
+                    callback_targets.append(dup.id)
+        await session.commit()
+
     # Prune object-free frames on the cpu queue (deletes the JPEG).
     for frame in frames:
         if not frame.kept:
@@ -152,6 +169,10 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
         # Off the critical path: collapse near-duplicate frames now that every
         # frame of the clip has its detections. The clip is already `done`.
         celery_app.send_task("vd.dedup_clip_frames", args=[str(clip_id)], queue="cpu")
+    for clip_id in callback_targets:
+        celery_app.send_task(
+            "vd.deliver_callback", args=[str(clip_id), "clip.done"], queue="cpu"
+        )
     return len(frames)
 
 

@@ -1,7 +1,8 @@
 from .base import Base
+from .job_result import build_job_result
 from .models import (
-    Clip,
     Class,
+    Clip,
     DetectionAudit,
     DetectionModel,
     Frame,
@@ -10,6 +11,7 @@ from .models import (
     Subclass,
     SubclassExample,
     TrainingRun,
+    WebhookDelivery,
 )
 from .registry import activate_model_version
 from .runtime_settings import (
@@ -31,7 +33,9 @@ __all__ = [
     "Subclass",
     "SubclassExample",
     "TrainingRun",
+    "WebhookDelivery",
     "activate_model_version",
+    "build_job_result",
     "clear_override",
     "get_overrides",
     "load_effective_settings",

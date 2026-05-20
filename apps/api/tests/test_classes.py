@@ -125,10 +125,19 @@ async def test_class_detections_404(client):  # type: ignore[no-untyped-def]
     assert (await client.get(f"/api/classes/{missing}/examples")).status_code == 404
 
 
-async def test_catalog_empty_when_no_active_yolo_model(client):  # type: ignore[no-untyped-def]
+async def test_catalog_falls_back_to_coco80_without_active_yolo(client):  # type: ignore[no-untyped-def]
+    """Fresh install — no ModelVersion registered yet, but the picker still
+    works against the well-known COCO-80 list."""
     resp = await client.get("/api/classes/catalog")
     assert resp.status_code == 200
-    assert resp.json() == []
+    by_name = {e["name"]: e for e in resp.json()}
+    # COCO 80 names total.
+    assert len(by_name) == 80
+    assert by_name["person"]["yolo_class_index"] == 0
+    assert by_name["dog"]["yolo_class_index"] == 16
+    # `person` is one of the seeded builtins → in_use.
+    assert by_name["person"]["in_use"] is True
+    assert by_name["cat"]["in_use"] is False
 
 
 async def test_catalog_lists_active_yolo_class_names(client, session):  # type: ignore[no-untyped-def]

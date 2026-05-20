@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.coco import COCO_80_NAMES
 from api.deps import enqueue, get_db
 from api.schemas.class_ import (
     ClassCatalogEntry,
@@ -47,7 +48,10 @@ async def list_class_catalog(
 
     Source of truth is `ModelVersion.metrics["class_names"]` for the active
     base YOLO model — the same dict consulted by `_sync_yolo_class_index`.
-    Returns an empty list when no YOLO model is active.
+    Falls back to the standard COCO-80 list (what every off-the-shelf YOLO
+    model ships with) when the worker hasn't yet registered a model — that
+    way the picker is usable on a fresh install, before any clip has been
+    processed.
     """
     active = await db.scalar(
         select(ModelVersion).where(
@@ -58,7 +62,7 @@ async def list_class_catalog(
     )
     class_names: dict[str, str] = (active.metrics or {}).get("class_names", {}) if active else {}
     if not class_names:
-        return []
+        class_names = {str(idx): name for idx, name in COCO_80_NAMES.items()}
 
     taken_names = set(
         (await db.scalars(select(Class.name))).all()

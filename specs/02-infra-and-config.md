@@ -255,7 +255,8 @@ Notes:
 ```
 data/
 ├── videos/
-│   ├── inbox/          # drop zone (watched by ingest-watcher)
+│   ├── inbox/          # drop zone — watched by ingest-watcher; also the
+│   │                   #   target of browser uploads (POST /api/clips/upload)
 │   ├── intake/         # external apps write here, then call POST /api/jobs
 │   │                   #   — NOT watched; the API call is the sole trigger
 │   ├── processed/      # moved here on success
@@ -298,6 +299,14 @@ over HTTP**:
 `intake/` is deliberately **not** watched by `ingest-watcher`: if it were, the
 watcher would race the API and create a second, metadata-less `clips` row for
 the same file. `inbox/` stays the watched path for manual/ad-hoc drops.
+
+Browser uploads take the `inbox/` path, not the `intake/` one. `POST
+/api/clips/upload` (spec 04 §Clips) streams the file into `inbox/` and stops
+there — it does **not** create a `clips` row, leaving the watcher as the sole
+trigger, so the same anti-double-row rule holds. Because the API now writes to
+`inbox/`, the `vd-api` container mounts `data/videos` (previously only the
+worker and watcher did). The web reverse proxy raises `client_max_body_size`
+and disables request buffering on `/api/` to pass multi-GB uploads through.
 
 ## Configuration (`.env` + pydantic-settings)
 

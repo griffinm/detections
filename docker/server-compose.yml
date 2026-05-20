@@ -39,6 +39,9 @@ services:
     environment: *vd-env
     volumes:
       - /home/griffin/video-detections/data/frames:/data/frames
+      # The API writes browser uploads (POST /api/clips/upload) into inbox/;
+      # the ingest-watcher shares this mount and picks them up on close/move.
+      - /home/griffin/video-detections/data/videos:/data/videos
     ports:
       - "10801:8000"
     networks:

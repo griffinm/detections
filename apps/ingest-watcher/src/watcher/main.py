@@ -2,7 +2,7 @@ import logging
 import time
 from pathlib import Path
 
-from watchdog.events import FileClosedEvent, FileSystemEventHandler
+from watchdog.events import FileClosedEvent, FileSystemEventHandler, FileSystemMovedEvent
 from watchdog.observers import Observer
 
 from vd_settings import Settings
@@ -21,9 +21,23 @@ def _dispatch(path: Path) -> None:
 
 class VideoHandler(FileSystemEventHandler):
     def on_closed(self, event: FileClosedEvent) -> None:  # type: ignore[override]
+        # IN_CLOSE_WRITE — a file written and closed in place (e.g. `cp`, or a
+        # browser upload streamed straight to its final name).
         if event.is_directory:
             return
         path = Path(str(event.src_path))
+        if path.suffix.lower() not in VIDEO_EXTENSIONS:
+            return
+        _dispatch(path)
+
+    def on_moved(self, event: FileSystemMovedEvent) -> None:  # type: ignore[override]
+        # IN_MOVED_TO — an atomic rename into the inbox. The API's upload
+        # endpoint streams to a hidden `.part` file then renames it to the
+        # final video name; that rename is a move, not a close, so it would be
+        # missed without this handler. The renamed file is already complete.
+        if event.is_directory:
+            return
+        path = Path(str(event.dest_path))
         if path.suffix.lower() not in VIDEO_EXTENSIONS:
             return
         _dispatch(path)

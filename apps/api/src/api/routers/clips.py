@@ -1,16 +1,23 @@
+import os
+import re
 import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import enqueue, get_db
+from api.deps import enqueue, get_db, settings
 from api.schemas.clip import ClipDetail, ClipRead
 from api.schemas.common import Paginated
 from api.schemas.frame import FrameRead
 from vd_db.models import Clip, Frame
 
 router = APIRouter(prefix="/clips", tags=["clips"])
+
+# Kept in sync with the ingest-watcher's VIDEO_EXTENSIONS.
+VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".webm"}
+_UPLOAD_CHUNK = 1 << 20  # 1 MiB
 
 
 @router.get("", response_model=Paginated[ClipRead])
@@ -48,6 +55,64 @@ async def list_clips(
         for c in rows
     ]
     return Paginated(items=items, total=total or 0)
+
+
+@router.post("/upload", status_code=202)
+async def upload_clip(file: UploadFile) -> dict[str, object]:
+    """Accept a browser video upload and drop it into the watched inbox.
+
+    The file lands in `VD_INBOX_DIR` exactly like a manual drop — the
+    ingest-watcher then enqueues `vd.ingest_video`. The API deliberately
+    creates no `clips` row and enqueues nothing itself: doing so would race the
+    watcher into a duplicate, metadata-less row (see spec 02 §External video
+    submission, which is why `intake/` is unwatched and `inbox/` is not).
+
+    The bytes stream to a hidden `.part` file, then get atomically renamed to
+    the final video name. The watcher ignores the `.part` file (non-video
+    suffix) and picks the finished video up via its `on_moved` handler, so it
+    never sees a half-written file.
+
+    Declared before `/{clip_id}` so the literal path wins the route match.
+    """
+    raw = Path(file.filename or "upload")
+    ext = raw.suffix.lower()
+    if ext not in VIDEO_EXTENSIONS:
+        raise HTTPException(
+            415,
+            f"Unsupported file type '{ext or raw.name}'. "
+            f"Allowed: {', '.join(sorted(VIDEO_EXTENSIONS))}",
+        )
+
+    inbox = settings.inbox_dir
+    inbox.mkdir(parents=True, exist_ok=True)
+    # Collapse the upload name to a bare, filesystem-safe stem — no directory
+    # component from the client can escape the inbox.
+    stem = re.sub(r"[^\w.\- ]+", "_", raw.stem).strip() or "upload"
+
+    part = inbox / f".upload-{uuid.uuid4().hex}{ext}.part"
+    size = 0
+    try:
+        with part.open("wb") as out:
+            while chunk := await file.read(_UPLOAD_CHUNK):
+                out.write(chunk)
+                size += len(chunk)
+        if size == 0:
+            raise HTTPException(422, "Uploaded file is empty")
+        final = inbox / f"{stem}{ext}"
+        n = 1
+        while final.exists():
+            final = inbox / f"{stem}-{n}{ext}"
+            n += 1
+        os.replace(part, final)
+    except BaseException:
+        # Never leave a stray file behind; the `.part` name keeps a failed
+        # upload invisible to the watcher in the first place.
+        part.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    return {"filename": final.name, "size_bytes": size}
 
 
 @router.get("/{clip_id}", response_model=ClipDetail)

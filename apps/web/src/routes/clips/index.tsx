@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2 } from "lucide-react";
+import { Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { ClipUploadList } from "@/components/ClipUploadList";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -15,7 +16,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { formatBytes, formatDuration } from "@/lib/format";
-import { type Clip, useClipsList, useDeleteClip } from "@/hooks/useClips";
+import {
+  type Clip,
+  useClipsList,
+  useClipUploads,
+  useDeleteClip,
+} from "@/hooks/useClips";
+
+// Mirrors the API's accepted video extensions. `video/*` alone misses some
+// container types (notably .mkv) in OS file pickers, so list them explicitly.
+const UPLOAD_ACCEPT = "video/*,.mp4,.mkv,.avi,.mov,.m4v,.webm";
 
 function DeleteClipButton({ clip }: { clip: Clip }) {
   const del = useDeleteClip();
@@ -124,9 +134,26 @@ function SkeletonRow() {
 export function ClipsList() {
   const navigate = useNavigate();
   const { data, isPending, isError } = useClipsList();
+  const { uploads, start, dismiss } = useClipUploads();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const onFilesPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) start([...files]);
+    // Reset so picking the same file again still fires `change`.
+    e.target.value = "";
+  };
 
   return (
     <div className="space-y-4">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={UPLOAD_ACCEPT}
+        multiple
+        className="hidden"
+        onChange={onFilesPicked}
+      />
       <PageHeader
         title="Clips"
         meta={
@@ -136,7 +163,15 @@ export function ClipsList() {
             </span>
           )
         }
+        actions={
+          <Button onClick={() => fileInputRef.current?.click()}>
+            <Upload className="h-4 w-4" />
+            Upload videos
+          </Button>
+        }
       />
+
+      <ClipUploadList uploads={uploads} onDismiss={dismiss} />
 
       {isError && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
@@ -165,8 +200,10 @@ export function ClipsList() {
                   colSpan={7}
                   className="px-4 py-12 text-center text-sm text-muted-foreground"
                 >
-                  No clips yet. Drop a video into{" "}
-                  <code className="font-mono">inbox/</code> to get started.
+                  No clips yet. Use{" "}
+                  <span className="font-medium">Upload videos</span> above, or
+                  drop a video into <code className="font-mono">inbox/</code> to
+                  get started.
                 </td>
               </tr>
             )}

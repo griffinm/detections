@@ -307,8 +307,13 @@ celery_app = Celery(broker=settings.redis_url)
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
 
 class Handler(FileSystemEventHandler):
-    def on_closed(self, event):
+    def on_closed(self, event):       # IN_CLOSE_WRITE — `cp`, direct write
         path = Path(event.src_path)
+        if path.suffix.lower() in VIDEO_EXTS:
+            celery_app.send_task("vd.ingest_video", args=[str(path)], queue="cpu")
+
+    def on_moved(self, event):        # IN_MOVED_TO — atomic rename into inbox
+        path = Path(event.dest_path)
         if path.suffix.lower() in VIDEO_EXTS:
             celery_app.send_task("vd.ingest_video", args=[str(path)], queue="cpu")
 
@@ -329,6 +334,11 @@ if __name__ == "__main__":
 Notes:
 - We listen on `on_closed`, not `on_created`, to avoid acting on a file
   that's still being written (Linux `IN_CLOSE_WRITE`).
+- We also listen on `on_moved`: `POST /api/clips/upload` streams an upload to a
+  hidden `.part` file (which `on_closed` ignores — non-video suffix), then
+  atomically renames it to the final video name. A rename is `IN_MOVED_TO`, not
+  a close, so it would be missed without `on_moved`. The renamed file is
+  already complete, so reacting immediately is safe.
 - If `on_closed` is not available on the host's filesystem (e.g., some FUSE
   mounts), fall back to a stable-size poll: schedule when size + mtime have
   been unchanged for ~3 seconds.

@@ -5,7 +5,9 @@
 # redis of its own — it reuses the shared `infra.yml` services on the `prod`
 # network. Postgres there must be the pgvector image.
 #
-# Build context is the repo source rsynced to /home/griffin/video-detections.
+# Images are built by ./tools/scripts/deploy.sh on the dev machine and pushed
+# to the private registry (nas.malfin.com:10100). The deploy script rewrites
+# the VD_*_IMAGE vars in ~/docker/.env to the new tags before `compose up`.
 
 x-vd-env: &vd-env
   # `:?` — fail the `compose up` loudly if the var is unset, rather than
@@ -31,9 +33,7 @@ x-vd-env: &vd-env
 
 services:
   vd-api:
-    build:
-      context: /home/griffin/video-detections
-      dockerfile: docker/api/Dockerfile
+    image: ${VD_API_IMAGE:?set VD_API_IMAGE in ~/docker/.env}
     container_name: vd-api
     restart: unless-stopped
     environment: *vd-env
@@ -50,9 +50,7 @@ services:
       - vd-worker-cpu
 
   vd-web:
-    build:
-      context: /home/griffin/video-detections
-      dockerfile: docker/web/Dockerfile
+    image: ${VD_WEB_IMAGE:?set VD_WEB_IMAGE in ~/docker/.env}
     container_name: vd-web
     restart: unless-stopped
     ports:
@@ -62,16 +60,14 @@ services:
     depends_on:
       - vd-api
 
-  # Built from the `gpu` target, not `cpu`: the lean `cpu` image omits vd-ml,
+  # Shares VD_WORKER_IMAGE with vd-worker-gpu — the deploy script builds the
+  # worker image with --target gpu because the lean `cpu` target omits vd-ml,
   # but worker/tasks/__init__.py imports every task module (incl. GPU ones)
   # eagerly, so the worker can't even start without the full ML stack. This
   # container still only consumes the `cpu` queue and gets no GPU device, so
   # queue isolation is intact — only the lean-image optimization is dropped.
   vd-worker-cpu:
-    build:
-      context: /home/griffin/video-detections
-      dockerfile: docker/worker/Dockerfile
-      target: gpu
+    image: ${VD_WORKER_IMAGE:?set VD_WORKER_IMAGE in ~/docker/.env}
     container_name: vd-worker-cpu
     restart: unless-stopped
     environment: *vd-env
@@ -84,10 +80,7 @@ services:
       - prod
 
   vd-worker-gpu:
-    build:
-      context: /home/griffin/video-detections
-      dockerfile: docker/worker/Dockerfile
-      target: gpu
+    image: ${VD_WORKER_IMAGE:?set VD_WORKER_IMAGE in ~/docker/.env}
     container_name: vd-worker-gpu
     restart: unless-stopped
     environment: *vd-env
@@ -108,9 +101,7 @@ services:
       - prod
 
   vd-ingest-watcher:
-    build:
-      context: /home/griffin/video-detections
-      dockerfile: docker/watcher/Dockerfile
+    image: ${VD_WATCHER_IMAGE:?set VD_WATCHER_IMAGE in ~/docker/.env}
     container_name: vd-ingest-watcher
     restart: unless-stopped
     environment: *vd-env

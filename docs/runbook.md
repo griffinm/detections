@@ -74,19 +74,38 @@ database, then untar `data/`.
 
 ## Deploying
 
-The app runs on the `layla` server with no CI/registry — images are built on
-the host. Redeploy with:
+The app runs on the `layla` server. Images are **built locally** and pushed
+to the private registry at `nas.malfin.com:10100`; the server only pulls
+and restarts. Redeploy with:
 
 ```bash
 ./tools/scripts/deploy.sh
 ```
 
-This rsyncs the repo source to `layla:/home/griffin/video-detections`,
-installs `docker/server-compose.yml` as `~/docker/compose/video-detections.yml`,
-then rebuilds and `up -d`. The `vd-api` container runs `alembic upgrade head`
-on start, so migrations need no manual step. `data/` is excluded from the
-rsync — it is bind-mounted server state. See `specs/02-infra-and-config.md`
-(§Production deployment).
+The script builds the four service images (api, web, worker, ingest-watcher)
+tagged with the short git hash, pushes them to the registry, rewrites
+`VD_API_IMAGE` / `VD_WEB_IMAGE` / `VD_WORKER_IMAGE` / `VD_WATCHER_IMAGE` in
+`layla:~/docker/.env`, then runs `docker compose up -d --pull always` on
+`layla`. The `vd-api` container runs `alembic upgrade head` on start, so
+migrations need no manual step. `data/` on the server is untouched — bind
+mounts already point there.
+
+**One-time server setup** (before the first deploy):
+
+```bash
+scp docker/server-compose.yml layla:~/docker/compose/video-detections.yml
+# Then on layla, add to ~/docker/.env:
+#   VD_API_IMAGE=nas.malfin.com:10100/vd-api:placeholder
+#   VD_WEB_IMAGE=nas.malfin.com:10100/vd-web:placeholder
+#   VD_WORKER_IMAGE=nas.malfin.com:10100/vd-worker:placeholder
+#   VD_WATCHER_IMAGE=nas.malfin.com:10100/vd-ingest-watcher:placeholder
+#   VIDEO_DETECTION_DB_PASSWORD=...
+# The placeholder image values are overwritten by the first deploy.
+```
+
+`VD_DEPLOY_HOST` overrides the SSH target (default `layla`); `VD_REGISTRY`
+overrides the registry. See `specs/02-infra-and-config.md`
+(§Production deployment) for the design rationale.
 
 ## Monitoring
 

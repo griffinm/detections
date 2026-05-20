@@ -151,10 +151,17 @@ stack's shared services rather than duplicating them.
 - **Data** is bind-mounted under `/home/griffin/video-detections/data` on the
   server (same layout as below). The watched inbox is
   `/home/griffin/video-detections/data/videos/inbox`.
-- **Images are built on the server** (`docker compose -f
-  compose/video-detections.yml build`) — this app has no CI/registry pipeline,
-  unlike the other apps in the stack. Redeploy = rsync repo source up, rebuild,
-  `docker compose up -d`.
+- **Images are built locally and pushed to a private registry** at
+  `nas.malfin.com:10100`, matching the sibling apps in this stack (see
+  `../unifi-protect/push-to-docker.sh`). `tools/scripts/deploy.sh` builds
+  `vd-api`, `vd-web`, `vd-worker`, `vd-ingest-watcher` tagged with the
+  short git hash, pushes them, rewrites the `VD_*_IMAGE` vars in
+  `~/docker/.env`, and runs `docker compose up -d --pull always` on
+  `layla`. No source rsync — `data/` on the server is bind-mounted state
+  that's already in place. `vd-worker-cpu` and `vd-worker-gpu` share the
+  same `VD_WORKER_IMAGE` (built with `--target gpu`); they differ only in
+  `command:` and the `runtime: nvidia` / gpu reservation on the gpu
+  variant.
 - **`--project-directory ~/docker` is required** for the standalone `-f
   compose/video-detections.yml` invocations in `deploy.sh`. Otherwise Compose
   treats `compose/` as the project dir, looks for `.env` in `~/docker/compose/`

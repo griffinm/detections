@@ -23,6 +23,38 @@ export interface SubclassExample {
   image_url: string | null;
 }
 
+export type GalleryInclude = "all" | "auto" | "reviewed";
+export type GallerySort = "created_desc" | "reviewed_desc";
+
+export interface DetectionGalleryItem {
+  id: string;
+  frame_id: string;
+  clip_id: string;
+  class_id: string | null;
+  subclass_id: string | null;
+  bbox: Bbox;
+  image_url: string | null;
+  source: string;
+  reviewed: boolean;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface GalleryParams {
+  include?: GalleryInclude;
+  sort?: GallerySort;
+  limit?: number;
+}
+
+function galleryQS(params: GalleryParams = {}): string {
+  const qs = new URLSearchParams();
+  if (params.include) qs.set("include", params.include);
+  if (params.sort) qs.set("sort", params.sort);
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
 export interface SubclassInput {
   name: string;
   color_hex?: string;
@@ -102,6 +134,23 @@ export function useSubclassExamples(subclassId: string) {
       const res = await fetch(`/api/subclasses/${subclassId}/examples`);
       if (!res.ok) throw new Error("Failed to fetch examples");
       return res.json() as Promise<SubclassExample[]>;
+    },
+    enabled: Boolean(subclassId),
+  });
+}
+
+export function useSubclassDetections(
+  subclassId: string,
+  params: GalleryParams = {},
+) {
+  return useQuery<DetectionGalleryItem[]>({
+    queryKey: ["subclass-detections", subclassId, params],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/subclasses/${subclassId}/detections${galleryQS(params)}`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch tagged detections");
+      return res.json() as Promise<DetectionGalleryItem[]>;
     },
     enabled: Boolean(subclassId),
   });

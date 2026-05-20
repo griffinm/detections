@@ -109,6 +109,16 @@ All paths prefixed with `/api`. Pagination is cursor-based (`?cursor=…&limit=�
 
 ### Clips
 - `GET /clips?status=&q=` — list, paginated.
+- `POST /clips/upload` *(multipart, Phase 8)* — accept a browser video upload
+  and write it into `VD_INBOX_DIR`. The file streams to a hidden `.part` file
+  and is atomically renamed to its final video name; the ingest-watcher then
+  enqueues `vd.ingest_video` exactly like a manual drop. The API creates **no**
+  `clips` row and enqueues nothing itself — that would race the watcher into a
+  duplicate, metadata-less row (the same reason `intake/` is unwatched; see
+  spec 02 §External video submission). Rejects non-video extensions with 415.
+  Returns 202 `{filename, size_bytes}`; the clip row arrives over SSE
+  (`clip.created`) once the watcher ingests it. Declared before `/{clip_id}`
+  so the literal path wins the route match.
 - `GET /clips/{id}` — detail, includes frame count + detection count.
 - `DELETE /clips/{id}` *(Phase 7)* — enqueues `vd.delete_clip`: cascades frames
   + detections, always removes the frame JPEGs, removes the source video iff
@@ -230,6 +240,18 @@ same-host LAN.
   item carries the detection bbox + frame image URL so the UI crops the
   thumbnail client-side).
 - `POST /subclasses/{id}/examples` — add an example; `DELETE …/examples/{id}`.
+- `GET /subclasses/{id}/detections?include=&sort=&limit=` — every non-deleted
+  detection tagged with this sub-class. `include` ∈ `all` (default) | `auto`
+  (`reviewed=false`) | `reviewed` (`reviewed=true`). `sort` ∈ `created_desc`
+  (default) | `reviewed_desc` (`reviewed_at DESC NULLS LAST, created_at DESC`).
+  Returns `DetectionGalleryItem[]` — a lean shape (id, frame_id, clip_id,
+  class_id, subclass_id, bbox, image_url, source, reviewed, reviewed_at,
+  created_at) tuned for the class-detail page gallery (CSS-cropped thumbs).
+- `GET /classes/{id}/detections?include=&sort=&limit=` — same shape and
+  params, aggregates across every sub-class (or none) of this class.
+- `GET /classes/{id}/examples?limit=` — `SubclassExample[]` rolled up across
+  the class's active sub-classes (newest first). Powers the class-level
+  "Examples" tab; sub-class `color_hex` keys the per-tile border in the UI.
 
 ### Labeling queue
 - `GET /labeling/queue?strategy=&class_id=&limit=` — ordered list of frames

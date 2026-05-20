@@ -172,14 +172,31 @@ params on `/api/labeling/queue`, exposed as two selectors on `/labeling`):
 Deferred: **Recent corrections** — frames near recently corrected ones, as a
 kNN over the corrected detection's embedding (`specs/deferred.md`).
 
-## Sub-class examples gallery
+## Class / sub-class detail page
 
-Reached from `/classes/:id`. Per sub-class:
-- A grid of cropped detection thumbnails.
-- "Star" toggle adds/removes from `subclass_examples`.
-- "Make canonical" highlights the K best examples shown in the labeling
-  picker as visual reminders.
-- Filter by date range / model_version.
+Reached from `/classes/:id`. Left rail is the sub-class picker, with an
+`All sub-classes` entry pinned on top that selects the whole-class view.
+The right panel is a two-tab surface (`components/ui/tabs.tsx`):
+
+- **Examples** — the curated kNN reference set.
+  - Sub-class scope: `GET /api/subclasses/{id}/examples` — same gallery as
+    before, with per-tile remove and a sub-class-colored border.
+  - Class scope: `GET /api/classes/{id}/examples` aggregates across the
+    class's active sub-classes; each tile is bordered with that sub-class's
+    color so a `bear / Bruno` example reads at a glance.
+- **All tagged** — every non-deleted detection currently assigned to this
+  class / sub-class. Powered by `GET /api/{subclasses|classes}/{id}/detections`
+  with three controls:
+  - **Filter chips:** `All` (default) / `Auto` (`reviewed=false`) / `Reviewed`
+    (`reviewed=true`) — distinguishes kNN auto-assignment from human review.
+  - **Sort:** `Newest first` (`created_desc`) or `Recently reviewed`
+    (`reviewed_desc`). State resets when switching the left-rail selection.
+  - **Tile badge:** green dot = reviewed, amber dot = auto-assigned.
+  - **Click** → deep-links to `/labeling/:frame_id` so a bad auto-assignment
+    can be corrected in one hop.
+
+Promoting still uses `S` in the labeling UI; the panel itself is read-only
+beyond `Remove example` on the Examples tab.
 
 When a user promotes a detection to an example, we:
 1. Insert `subclass_examples` row.

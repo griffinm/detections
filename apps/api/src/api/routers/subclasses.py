@@ -18,7 +18,12 @@ from api.schemas.class_ import (
     SubclassRead,
     SubclassUpdate,
 )
-from api.schemas.detection import Bbox
+from api.schemas.detection import Bbox, DetectionGalleryItem
+from api.services.gallery import (
+    GalleryInclude,
+    GallerySort,
+    query_gallery_items,
+)
 from vd_db.models import DetectionModel, Frame, Subclass, SubclassExample
 
 router = APIRouter(prefix="/subclasses", tags=["subclasses"])
@@ -127,6 +132,27 @@ async def list_examples(
         )
     ).all()
     return [_example_read(example, bbox, frame) for example, bbox, frame in rows]
+
+
+@router.get("/{subclass_id}/detections", response_model=list[DetectionGalleryItem])
+async def list_subclass_detections(
+    subclass_id: uuid.UUID,
+    include: GalleryInclude = Query(default="all"),
+    sort: GallerySort = Query(default="created_desc"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+) -> list[DetectionGalleryItem]:
+    """Every detection tagged with this sub-class (auto + reviewed), newest first."""
+    subclass = await db.get(Subclass, subclass_id)
+    if subclass is None:
+        raise HTTPException(status_code=404, detail="Sub-class not found")
+    return await query_gallery_items(
+        db,
+        where=DetectionModel.subclass_id == subclass_id,
+        include=include,
+        sort=sort,
+        limit=limit,
+    )
 
 
 @router.post("/{subclass_id}/examples", response_model=SubclassExampleRead, status_code=201)

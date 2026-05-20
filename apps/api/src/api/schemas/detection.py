@@ -47,3 +47,23 @@ class DetectionUpdate(BaseModel):
 
 class PromoteExample(BaseModel):
     subclass_id: uuid.UUID
+
+
+class DetectionGalleryItem(BaseModel):
+    """A detection tile for the class/sub-class gallery — bbox + frame path.
+
+    Lean shape, distinct from `DetectionRead`: carries only what the gallery
+    grid renders (CSS-cropped thumb, reviewed badge, deep-link target).
+    """
+
+    id: uuid.UUID
+    frame_id: uuid.UUID
+    clip_id: uuid.UUID
+    class_id: uuid.UUID | None
+    subclass_id: uuid.UUID | None
+    bbox: Bbox
+    image_url: str | None
+    source: str
+    reviewed: bool
+    reviewed_at: datetime | None
+    created_at: datetime

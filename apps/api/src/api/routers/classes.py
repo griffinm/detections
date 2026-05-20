@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,9 +10,16 @@ from api.schemas.class_ import (
     ClassRead,
     ClassUpdate,
     SubclassCreate,
+    SubclassExampleRead,
     SubclassRead,
 )
-from vd_db.models import Class, Subclass
+from api.schemas.detection import Bbox, DetectionGalleryItem
+from api.services.gallery import (
+    GalleryInclude,
+    GallerySort,
+    query_gallery_items,
+)
+from vd_db.models import Class, DetectionModel, Frame, Subclass, SubclassExample
 
 router = APIRouter(prefix="/classes", tags=["classes"])
 
@@ -132,6 +139,63 @@ async def create_subclass(
     if had_active is None:
         enqueue("vd.backfill_embeddings", str(class_id), queue="gpu")
     return subclass
+
+
+@router.get("/{class_id}/detections", response_model=list[DetectionGalleryItem])
+async def list_class_detections(
+    class_id: uuid.UUID,
+    include: GalleryInclude = Query(default="all"),
+    sort: GallerySort = Query(default="created_desc"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+) -> list[DetectionGalleryItem]:
+    """Every non-deleted detection tagged with this class (any sub-class or none)."""
+    cls = await db.get(Class, class_id)
+    if cls is None:
+        raise HTTPException(status_code=404, detail="Class not found")
+    return await query_gallery_items(
+        db,
+        where=DetectionModel.class_id == class_id,
+        include=include,
+        sort=sort,
+        limit=limit,
+    )
+
+
+@router.get("/{class_id}/examples", response_model=list[SubclassExampleRead])
+async def list_class_examples(
+    class_id: uuid.UUID,
+    limit: int = Query(default=400, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+) -> list[SubclassExampleRead]:
+    """Curated examples across every active sub-class of this class."""
+    cls = await db.get(Class, class_id)
+    if cls is None:
+        raise HTTPException(status_code=404, detail="Class not found")
+    rows = (
+        await db.execute(
+            select(SubclassExample, DetectionModel.bbox, Frame)
+            .join(Subclass, Subclass.id == SubclassExample.subclass_id)
+            .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
+            .join(Frame, Frame.id == DetectionModel.frame_id)
+            .where(Subclass.class_id == class_id, Subclass.is_active.is_(True))
+            .order_by(SubclassExample.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        SubclassExampleRead(
+            id=example.id,
+            subclass_id=example.subclass_id,
+            detection_id=example.detection_id,
+            starred=example.starred,
+            created_at=example.created_at,
+            bbox=Bbox(**bbox),
+            frame_id=frame.id,
+            image_url=f"/files/frames/{frame.path}" if frame.path else None,
+        )
+        for example, bbox, frame in rows
+    ]
 
 
 @router.post("/{class_id}/rescan-subclasses", status_code=202)

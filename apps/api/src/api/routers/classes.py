@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import enqueue, get_db
 from api.schemas.class_ import (
+    ClassCatalogEntry,
     ClassCreate,
     ClassRead,
     ClassUpdate,
@@ -19,7 +20,14 @@ from api.services.gallery import (
     GallerySort,
     query_gallery_items,
 )
-from vd_db.models import Class, DetectionModel, Frame, Subclass, SubclassExample
+from vd_db.models import (
+    Class,
+    DetectionModel,
+    Frame,
+    ModelVersion,
+    Subclass,
+    SubclassExample,
+)
 
 router = APIRouter(prefix="/classes", tags=["classes"])
 
@@ -30,6 +38,43 @@ async def list_classes(db: AsyncSession = Depends(get_db)) -> list[Class]:
     return list(rows)
 
 
+@router.get("/catalog", response_model=list[ClassCatalogEntry])
+async def list_class_catalog(
+    db: AsyncSession = Depends(get_db),
+) -> list[ClassCatalogEntry]:
+    """Names known to the active YOLO model, marked with `in_use` for those
+    already represented in `classes`.
+
+    Source of truth is `ModelVersion.metrics["class_names"]` for the active
+    base YOLO model — the same dict consulted by `_sync_yolo_class_index`.
+    Returns an empty list when no YOLO model is active.
+    """
+    active = await db.scalar(
+        select(ModelVersion).where(
+            ModelVersion.kind == "yolo",
+            ModelVersion.target_class_id.is_(None),
+            ModelVersion.is_active.is_(True),
+        )
+    )
+    class_names: dict[str, str] = (active.metrics or {}).get("class_names", {}) if active else {}
+    if not class_names:
+        return []
+
+    taken_names = set(
+        (await db.scalars(select(Class.name))).all()
+    )
+    entries = [
+        ClassCatalogEntry(
+            name=name,
+            yolo_class_index=int(idx),
+            in_use=name in taken_names,
+        )
+        for idx, name in class_names.items()
+    ]
+    entries.sort(key=lambda e: e.name)
+    return entries
+
+
 @router.post("", response_model=ClassRead, status_code=201)
 async def create_class(
     payload: ClassCreate,
@@ -37,11 +82,19 @@ async def create_class(
 ) -> Class:
     if await db.scalar(select(Class).where(Class.name == payload.name)):
         raise HTTPException(status_code=409, detail="Class name already exists")
+    if payload.yolo_class_index is not None and await db.scalar(
+        select(Class).where(Class.yolo_class_index == payload.yolo_class_index)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Another class already owns that YOLO class index",
+        )
     cls = Class(
         name=payload.name,
         color_hex=payload.color_hex,
         source="custom",
         is_active=True,
+        yolo_class_index=payload.yolo_class_index,
     )
     db.add(cls)
     await db.commit()

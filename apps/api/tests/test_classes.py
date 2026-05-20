@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import select
 
-from vd_db.models import Class, Clip, DetectionModel, Frame
+from vd_db.models import Class, Clip, DetectionModel, Frame, ModelVersion
 
 
 async def _class_id(session, name):  # type: ignore[no-untyped-def]
@@ -123,3 +123,48 @@ async def test_class_detections_404(client):  # type: ignore[no-untyped-def]
     missing = uuid.uuid4()
     assert (await client.get(f"/api/classes/{missing}/detections")).status_code == 404
     assert (await client.get(f"/api/classes/{missing}/examples")).status_code == 404
+
+
+async def test_catalog_empty_when_no_active_yolo_model(client):  # type: ignore[no-untyped-def]
+    resp = await client.get("/api/classes/catalog")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_catalog_lists_active_yolo_class_names(client, session):  # type: ignore[no-untyped-def]
+    session.add(
+        ModelVersion(
+            kind="yolo", name="base", weights_path="/m.pt",
+            metrics={"class_names": {"0": "person", "15": "cat", "55": "cake"}},
+            is_active=True,
+        )
+    )
+    await session.commit()
+
+    resp = await client.get("/api/classes/catalog")
+    assert resp.status_code == 200
+    by_name = {e["name"]: e for e in resp.json()}
+    assert set(by_name) == {"person", "cat", "cake"}
+    assert by_name["cat"]["yolo_class_index"] == 15
+    # `person` is one of the seeded builtins → in_use; cat/cake are fresh.
+    assert by_name["person"]["in_use"] is True
+    assert by_name["cat"]["in_use"] is False
+    assert by_name["cake"]["in_use"] is False
+
+
+async def test_create_class_with_yolo_class_index(client):  # type: ignore[no-untyped-def]
+    created = await client.post(
+        "/api/classes", json={"name": "cat", "yolo_class_index": 15}
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["yolo_class_index"] == 15
+    assert body["source"] == "custom"
+
+
+async def test_create_class_rejects_duplicate_yolo_class_index(client):  # type: ignore[no-untyped-def]
+    # `person` is seeded with yolo_class_index=0 — a second class can't take it.
+    resp = await client.post(
+        "/api/classes", json={"name": "humanoid", "yolo_class_index": 0}
+    )
+    assert resp.status_code == 409

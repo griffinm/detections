@@ -21,6 +21,15 @@ class ClassRead(BaseModel):
 class ClassCreate(BaseModel):
     name: str = Field(min_length=1)
     color_hex: str = "#888888"
+    yolo_class_index: int | None = None
+
+
+class ClassCatalogEntry(BaseModel):
+    """A name from the active YOLO model's class list, offered to the picker."""
+
+    name: str
+    yolo_class_index: int
+    in_use: bool
 
 
 class ClassUpdate(BaseModel):

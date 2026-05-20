@@ -38,10 +38,30 @@ export function useClasses() {
   });
 }
 
+export interface ClassCatalogEntry {
+  name: string;
+  yolo_class_index: number;
+  in_use: boolean;
+}
+
+export function useClassCatalog(enabled: boolean) {
+  return useQuery<ClassCatalogEntry[]>({
+    queryKey: ["classes", "catalog"],
+    queryFn: async () => {
+      const res = await fetch("/api/classes/catalog");
+      if (!res.ok) throw new Error("Failed to fetch class catalog");
+      return res.json() as Promise<ClassCatalogEntry[]>;
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export interface ClassInput {
   name: string;
   color_hex?: string;
   is_active?: boolean;
+  yolo_class_index?: number | null;
 }
 
 export function useCreateClass() {

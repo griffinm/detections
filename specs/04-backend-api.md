@@ -230,6 +230,16 @@ same-host LAN.
 
 ### Classes / Subclasses *(subclass endpoints: Phase 4)*
 - `GET /classes`, `POST /classes`, `PATCH /classes/{id}`, `DELETE /classes/{id}`.
+  `POST /classes` accepts an optional `yolo_class_index`; supplying it links
+  the new class to that YOLO output index so detections of that class are
+  routed to the row immediately (no model re-activation needed). The index
+  must be unique across `classes` — duplicates are rejected with `409`.
+- `GET /classes/catalog` — names known to the active base YOLO model
+  (`kind="yolo"`, `target_class_id IS NULL`, `is_active=true`), read from
+  `ModelVersion.metrics["class_names"]`. Each entry is
+  `{name, yolo_class_index, in_use}`; `in_use` flags names already present
+  in `classes`. Empty list when no YOLO model is active. Powers the
+  catalog picker in the "New class" dialog.
 - `GET /classes/{id}/subclasses`, `POST /classes/{id}/subclasses` — creating
   the *first* active sub-class enqueues `vd.backfill_embeddings`.
 - `POST /classes/{id}/rescan-subclasses` — manually re-enqueue

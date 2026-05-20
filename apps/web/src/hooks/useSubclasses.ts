@@ -21,6 +21,7 @@ export interface SubclassExample {
   bbox: Bbox;
   frame_id: string;
   image_url: string | null;
+  crop_url: string | null;
 }
 
 export type GalleryInclude = "all" | "auto" | "reviewed";
@@ -34,6 +35,7 @@ export interface DetectionGalleryItem {
   subclass_id: string | null;
   bbox: Bbox;
   image_url: string | null;
+  crop_url: string | null;
   source: string;
   reviewed: boolean;
   reviewed_at: string | null;

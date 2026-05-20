@@ -226,6 +226,14 @@ same-host LAN.
 - `DELETE /detections/{id}` — soft delete (`deleted_at`); audit `user_delete`.
 - `POST /detections/{id}/restore` — clear `deleted_at` (undo affordance).
 - `POST /detections/{id}/promote-example` — promotes to `subclass_examples`. *(Phase 4)*
+- `GET /detections/{id}/crop?size=192` — returns a small JPEG of the bbox
+  region (Pillow crop + Lanczos resize), with disk caching under
+  `<frames_dir>/.thumbs/<detection_id>_<bbox_hash>_<size>.jpg`. The cache key
+  includes a hash of the bbox so a resized box yields a different filename
+  (old crops become harmless orphans). 410 once the source frame is purged.
+  Lets the class-detail gallery render hundreds of tiles without each one
+  pulling the full frame JPEG (the original CSS-crop approach loaded
+  hundreds of MB into the page).
 - Detection mutations publish a `frame.updated` SSE event.
 
 ### Classes / Subclasses *(subclass endpoints: Phase 4)*
@@ -247,16 +255,18 @@ same-host LAN.
 - `GET /subclasses?class_id=`, `GET /subclasses/{id}`, `PATCH /subclasses/{id}`,
   `DELETE /subclasses/{id}` (soft delete via `is_active`).
 - `GET /subclasses/{id}/examples` — example gallery (limit-capped list; each
-  item carries the detection bbox + frame image URL so the UI crops the
-  thumbnail client-side).
+  item carries the detection bbox, the frame image URL, and a `crop_url`
+  pointing at the server-cropped thumbnail endpoint).
 - `POST /subclasses/{id}/examples` — add an example; `DELETE …/examples/{id}`.
 - `GET /subclasses/{id}/detections?include=&sort=&limit=` — every non-deleted
   detection tagged with this sub-class. `include` ∈ `all` (default) | `auto`
   (`reviewed=false`) | `reviewed` (`reviewed=true`). `sort` ∈ `created_desc`
   (default) | `reviewed_desc` (`reviewed_at DESC NULLS LAST, created_at DESC`).
   Returns `DetectionGalleryItem[]` — a lean shape (id, frame_id, clip_id,
-  class_id, subclass_id, bbox, image_url, source, reviewed, reviewed_at,
-  created_at) tuned for the class-detail page gallery (CSS-cropped thumbs).
+  class_id, subclass_id, bbox, image_url, crop_url, source, reviewed,
+  reviewed_at, created_at) tuned for the class-detail page gallery. The UI
+  renders the `crop_url` thumbnail; `image_url`/`bbox` stay on the row for
+  callers that need the full frame.
 - `GET /classes/{id}/detections?include=&sort=&limit=` — same shape and
   params, aggregates across every sub-class (or none) of this class.
 - `GET /classes/{id}/examples?limit=` — `SubclassExample[]` rolled up across

@@ -10,7 +10,8 @@ Deletes are soft (`deleted_at`) so the `user_delete` audit survives the
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,7 @@ from api.schemas.detection import (
     DetectionUpdate,
     PromoteExample,
 )
+from api.services.crops import ensure_crop
 from api.services.events import publish
 from api.services.training_service import maybe_trigger_training
 from vd_db.models import Class, DetectionAudit, DetectionModel, Frame, Subclass, SubclassExample
@@ -172,6 +174,41 @@ async def restore_detection(
     await db.refresh(detection)
     await _publish_frame_updated(db, detection.frame_id)
     return detection
+
+
+@router.get("/{detection_id}/crop")
+async def detection_crop(
+    detection_id: uuid.UUID,
+    size: int = Query(default=192, ge=32, le=512),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """Return a cached JPEG of the detection's bbox, generating it on first hit.
+
+    Lets the class gallery render hundreds of tiles without the browser
+    downloading the full frame JPEG behind each one.
+    """
+    row = (
+        await db.execute(
+            select(DetectionModel.bbox, Frame.path)
+            .join(Frame, Frame.id == DetectionModel.frame_id)
+            .where(DetectionModel.id == detection_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Detection not found")
+    bbox, frame_path = row
+    if frame_path is None:
+        raise HTTPException(status_code=410, detail="Frame image purged")
+
+    path = ensure_crop(str(detection_id), frame_path, bbox, size)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Frame image unavailable")
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        # Filename includes a bbox hash, so the bytes are immutable per URL.
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @router.post("/{detection_id}/promote-example", response_model=DetectionRead)

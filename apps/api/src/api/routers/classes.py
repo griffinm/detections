@@ -16,6 +16,7 @@ from api.schemas.class_ import (
     SubclassRead,
 )
 from api.schemas.detection import Bbox, DetectionGalleryItem
+from api.services.crops import crop_url
 from api.services.gallery import (
     GalleryInclude,
     GallerySort,
@@ -250,6 +251,7 @@ async def list_class_examples(
             bbox=Bbox(**bbox),
             frame_id=frame.id,
             image_url=f"/files/frames/{frame.path}" if frame.path else None,
+            crop_url=crop_url(str(example.detection_id)) if frame.path else None,
         )
         for example, bbox, frame in rows
     ]

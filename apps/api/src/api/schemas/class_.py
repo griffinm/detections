@@ -75,4 +75,5 @@ class SubclassExampleRead(BaseModel):
     bbox: Bbox
     frame_id: uuid.UUID
     image_url: str | None
+    crop_url: str | None
 

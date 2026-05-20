@@ -53,7 +53,7 @@ class DetectionGalleryItem(BaseModel):
     """A detection tile for the class/sub-class gallery — bbox + frame path.
 
     Lean shape, distinct from `DetectionRead`: carries only what the gallery
-    grid renders (CSS-cropped thumb, reviewed badge, deep-link target).
+    grid renders (server-cropped thumb, reviewed badge, deep-link target).
     """
 
     id: uuid.UUID
@@ -63,6 +63,7 @@ class DetectionGalleryItem(BaseModel):
     subclass_id: uuid.UUID | None
     bbox: Bbox
     image_url: str | None
+    crop_url: str | None
     source: str
     reviewed: bool
     reviewed_at: datetime | None

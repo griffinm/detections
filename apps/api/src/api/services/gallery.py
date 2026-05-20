@@ -11,6 +11,7 @@ from sqlalchemy import ColumnElement, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.schemas.detection import Bbox, DetectionGalleryItem
+from api.services.crops import crop_url
 from vd_db.models import DetectionModel, Frame
 
 GalleryInclude = Literal["all", "auto", "reviewed"]
@@ -55,6 +56,7 @@ async def query_gallery_items(
             subclass_id=det.subclass_id,
             bbox=Bbox(**det.bbox),
             image_url=f"/files/frames/{frame_path}" if frame_path else None,
+            crop_url=crop_url(str(det.id)) if frame_path else None,
             source=det.source,
             reviewed=det.reviewed,
             reviewed_at=det.reviewed_at,

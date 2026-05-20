@@ -19,6 +19,7 @@ from api.schemas.class_ import (
     SubclassUpdate,
 )
 from api.schemas.detection import Bbox, DetectionGalleryItem
+from api.services.crops import crop_url
 from api.services.gallery import (
     GalleryInclude,
     GallerySort,
@@ -41,6 +42,7 @@ def _example_read(
         bbox=Bbox(**bbox),
         frame_id=frame.id,
         image_url=f"/files/frames/{frame.path}" if frame.path else None,
+        crop_url=crop_url(str(example.detection_id)) if frame.path else None,
     )
 
 

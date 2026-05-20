@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { SubclassFormDialog } from "@/components/SubclassFormDialog";
-import { cropBackgroundStyle } from "@/lib/cropStyle";
 import { cn } from "@/lib/utils";
 import { useClasses, useClassDetections, useClassExamples } from "@/hooks/useClasses";
 import { useStartTraining } from "@/hooks/useTraining";
@@ -35,7 +34,7 @@ import {
 
 type GalleryTab = "examples" | "tagged";
 
-/** A detection crop, CSS-cropped from the full frame JPEG via its bbox. */
+/** A 96px tile backed by the server's cached JPEG crop of the detection bbox. */
 function ExampleThumb({
   example,
   borderColor,
@@ -48,12 +47,19 @@ function ExampleThumb({
   return (
     <div className="group relative">
       <div
-        className="h-24 w-24 rounded border-2 bg-muted bg-no-repeat"
-        style={{
-          ...cropBackgroundStyle(example.bbox, example.image_url),
-          borderColor: borderColor ?? "var(--border)",
-        }}
-      />
+        className="h-24 w-24 overflow-hidden rounded border-2 bg-muted"
+        style={{ borderColor: borderColor ?? "var(--border)" }}
+      >
+        {example.crop_url ? (
+          <img
+            src={example.crop_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover"
+          />
+        ) : null}
+      </div>
       {onRemove ? (
         <button
           onClick={onRemove}
@@ -87,12 +93,19 @@ function TaggedThumb({
       className="group relative block"
     >
       <div
-        className="h-24 w-24 rounded border-2 bg-muted bg-no-repeat"
-        style={{
-          ...cropBackgroundStyle(item.bbox, item.image_url),
-          borderColor: borderColor ?? "var(--border)",
-        }}
-      />
+        className="h-24 w-24 overflow-hidden rounded border-2 bg-muted"
+        style={{ borderColor: borderColor ?? "var(--border)" }}
+      >
+        {item.crop_url ? (
+          <img
+            src={item.crop_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover"
+          />
+        ) : null}
+      </div>
       <span
         className={cn(
           "absolute right-1 top-1 h-2.5 w-2.5 rounded-full border border-background",

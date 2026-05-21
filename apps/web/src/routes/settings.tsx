@@ -32,7 +32,11 @@ const SECTIONS: { title: string; keys: string[] }[] = [
   },
   {
     title: "Retention",
-    keys: ["delete_processed_videos", "delete_frames_without_objects"],
+    keys: [
+      "delete_processed_videos",
+      "prune_similar_frames",
+      "frame_similarity_threshold",
+    ],
   },
 ];
 
@@ -47,7 +51,10 @@ const DESCRIPTIONS: Record<string, string> = {
   yolo_finetune_epochs: "Epochs per fine-tune run.",
   yolo_finetune_imgsz: "Training image size (px).",
   delete_processed_videos: "Delete the source video when a clip is removed.",
-  delete_frames_without_objects: "Prune frame JPEGs that have no detections.",
+  prune_similar_frames:
+    "Drop near-duplicate frames within a clip after detection.",
+  frame_similarity_threshold:
+    "Max pHash Hamming distance (0–64) at which adjacent frames count as duplicates. Higher = more aggressive pruning.",
 };
 
 function humanize(key: string): string {

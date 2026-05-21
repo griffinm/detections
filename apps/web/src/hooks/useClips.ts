@@ -54,6 +54,29 @@ export function useDeleteClip() {
   });
 }
 
+export function useReextractClip() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const res = await fetch(`/api/clips/${id}/reextract`, { method: "POST" });
+      if (!res.ok) {
+        let detail = "Failed to re-extract clip";
+        try {
+          detail = ((await res.json()) as { detail?: string }).detail ?? detail;
+        } catch {
+          // non-JSON body — keep the generic message
+        }
+        throw new Error(detail);
+      }
+    },
+    onSuccess: (_, id) => {
+      void qc.invalidateQueries({ queryKey: ["clips"] });
+      void qc.invalidateQueries({ queryKey: ["clips", id] });
+      void qc.invalidateQueries({ queryKey: ["clips", id, "frames"] });
+    },
+  });
+}
+
 export type UploadStatus = "uploading" | "done" | "error";
 
 export interface ClipUpload {

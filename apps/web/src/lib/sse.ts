@@ -25,7 +25,14 @@ export function useLiveEvents() {
             break;
           case "clip.status":
             void qc.invalidateQueries({ queryKey: ["clips"] });
-            if (e.clip_id) void qc.invalidateQueries({ queryKey: ["clips", e.clip_id] });
+            if (e.clip_id) {
+              void qc.invalidateQueries({ queryKey: ["clips", e.clip_id] });
+              // Cover the re-extract path: the old frames must drop from the
+              // grid the moment status flips back to `extracting`.
+              void qc.invalidateQueries({
+                queryKey: ["clips", e.clip_id, "frames"],
+              });
+            }
             break;
           case "clip.done":
             void qc.invalidateQueries({ queryKey: ["clips"] });

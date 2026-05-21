@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type Konva from "konva";
 import {
   Image as KonvaImage,
@@ -62,6 +62,31 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
     h: number;
   } | null>(null);
 
+  // Debounce YOLO prediction so a user mid-resize doesn't trigger inference
+  // on every intermediate bbox. One pending timer per component is enough —
+  // the latest scheduled detection wins; earlier ones are superseded.
+  const predictTimer = useRef<number | null>(null);
+  const schedulePredict = useCallback(
+    (id: string) => {
+      if (predictTimer.current !== null) {
+        window.clearTimeout(predictTimer.current);
+      }
+      predictTimer.current = window.setTimeout(() => {
+        predictTimer.current = null;
+        void actions.predict(id);
+      }, 1000);
+    },
+    [actions],
+  );
+  useEffect(() => {
+    return () => {
+      if (predictTimer.current !== null) {
+        window.clearTimeout(predictTimer.current);
+        predictTimer.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -117,6 +142,10 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
     node.scaleY(1);
     const bbox = toNormalizedBbox({ x: node.x(), y: node.y(), w, h }, dispW, dispH);
     void actions.update(id, { bbox });
+    // Re-run YOLO on the new geometry, but only for user-drawn boxes — model
+    // detections already have their prediction and shouldn't churn audits.
+    const det = frame.detections.find((d) => d.id === id);
+    if (det?.source === "user") schedulePredict(id);
   }
 
   // Pointer (not mouse) events so box-drawing works with both mouse and touch.
@@ -156,6 +185,7 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
         defaultClassId,
       );
       select(created.id);
+      schedulePredict(created.id);
     }
   }
 

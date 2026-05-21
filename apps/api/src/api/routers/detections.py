@@ -10,7 +10,7 @@ Deletes are soft (`deleted_at`) so the `user_delete` audit survives the
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -174,6 +174,25 @@ async def restore_detection(
     await db.refresh(detection)
     await _publish_frame_updated(db, detection.frame_id)
     return detection
+
+
+@router.post("/{detection_id}/predict", status_code=202)
+async def predict_detection(
+    detection_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Kick off a YOLO prediction for a user-drawn box.
+
+    The actual work runs on the gpu worker (`vd.predict_user_detection`),
+    which writes back `predicted_class_id` — and `class_id` if the user
+    didn't pre-select one — and publishes `frame.updated` over SSE. The
+    frontend debounces this call ~1 s after the last draw/resize.
+    """
+    detection = await db.get(DetectionModel, detection_id)
+    if detection is None or detection.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Detection not found")
+    enqueue("vd.predict_user_detection", str(detection_id), queue="gpu")
+    return Response(status_code=202)
 
 
 @router.get("/{detection_id}/crop")

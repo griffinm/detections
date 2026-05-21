@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   createDetection,
   deleteDetection,
+  predictDetection,
   promoteExample,
   restoreDetection,
   reviewFrame,
@@ -95,6 +96,17 @@ export function useDetectionActions(frameId: string) {
         patchCache((f) => ({ ...f, detections: [...f.detections, detection] }));
         store().pushEdit({ op: "create", id: detection.id });
         return detection;
+      },
+
+      /** Ask the backend to guess this user-drawn box's class via YOLO.
+       *  Fire-and-forget — the prediction arrives over SSE and invalidates
+       *  this frame's cache. Errors are silent: a missed guess is fine. */
+      predict: async (id: string): Promise<void> => {
+        try {
+          await predictDetection(id);
+        } catch {
+          // Swallow — the box is already saved; a failed predict is benign.
+        }
       },
 
       /** Soft-delete a detection. */

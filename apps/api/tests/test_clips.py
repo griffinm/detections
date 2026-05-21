@@ -40,6 +40,51 @@ async def test_delete_missing_clip_is_404(client):  # type: ignore[no-untyped-de
     assert resp.status_code == 404
 
 
+async def test_reextract_enqueues_task(  # type: ignore[no-untyped-def]
+    client, session, monkeypatch, tmp_path: Path,
+):
+    """The button on /clips/:id enqueues `vd.reextract_frames` so the worker
+    can wipe + re-process the clip."""
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        "api.routers.clips.enqueue", lambda *a, **k: calls.append(a)
+    )
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"\x00")
+    clip = Clip(
+        filename="v.mp4", original_path="/in/v.mp4", final_path=str(video),
+        sha256=uuid.uuid4().hex, size_bytes=1, status="done",
+    )
+    session.add(clip)
+    await session.commit()
+
+    resp = await client.post(f"/api/clips/{clip.id}/reextract")
+    assert resp.status_code == 202
+    assert resp.json()["clip_id"] == str(clip.id)
+    assert calls and calls[0] == ("vd.reextract_frames", str(clip.id))
+
+
+async def test_reextract_409s_when_source_video_missing(  # type: ignore[no-untyped-def]
+    client, session, monkeypatch,
+):
+    """The worker needs the original bytes; without them, re-extract is a 409."""
+    monkeypatch.setattr("api.routers.clips.enqueue", lambda *a, **k: None)
+    clip = Clip(
+        filename="v.mp4", original_path="/in/v.mp4", final_path="/nonexistent/v.mp4",
+        sha256=uuid.uuid4().hex, size_bytes=1, status="done",
+    )
+    session.add(clip)
+    await session.commit()
+
+    resp = await client.post(f"/api/clips/{clip.id}/reextract")
+    assert resp.status_code == 409
+
+
+async def test_reextract_missing_clip_is_404(client):  # type: ignore[no-untyped-def]
+    resp = await client.post(f"/api/clips/{uuid.uuid4()}/reextract")
+    assert resp.status_code == 404
+
+
 @pytest.fixture
 def inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the upload endpoint at a throwaway inbox directory."""

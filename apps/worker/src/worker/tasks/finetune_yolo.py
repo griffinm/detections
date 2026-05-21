@@ -25,7 +25,7 @@ from worker.models import get_or_register_yolo
 
 async def _finetune_yolo_async(training_run_id: str) -> str:
     # Imported here, not at module scope: the cpu worker lacks the gpu deps.
-    from vd_ml import train_yolo
+    from vd_ml import train_yolo, unload_inference_models
 
     run_id = uuid.UUID(training_run_id)
 
@@ -56,6 +56,14 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
             return "failed"
 
     await publish("training_run.update", training_run_id=training_run_id, status="running")
+
+    # The detector, face, and DINOv2 models are normally kept resident across
+    # tasks so detection stays warm. They'd leave no headroom for fine-tuning
+    # at imgsz=960 batch=16 on a 16 GB GPU — the resulting OOM auto-recovery
+    # corrupts cuDNN state and the run dies with
+    # CUDNN_STATUS_EXECUTION_FAILED_CUDART. Wipe them; the next inference
+    # task transparently re-loads them via the `lru_cache` loaders.
+    unload_inference_models()
 
     # Train in a worker thread; bridge per-epoch progress back onto the loop.
     loop = asyncio.get_running_loop()

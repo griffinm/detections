@@ -26,7 +26,7 @@ async def _seed_frame(session, frames_dir, *, kept):  # type: ignore[no-untyped-
     return frame, file_path
 
 
-async def test_prune_deletes_object_free_frame(session, frames_dir):  # type: ignore[no-untyped-def]
+async def test_prune_deletes_deduped_frame(session, frames_dir):  # type: ignore[no-untyped-def]
     frame, file_path = await _seed_frame(session, frames_dir, kept=False)
 
     assert await _prune_frame_async(str(frame.id)) is True
@@ -38,14 +38,6 @@ async def test_prune_deletes_object_free_frame(session, frames_dir):  # type: ig
 
 async def test_prune_skips_kept_frame(session, frames_dir):  # type: ignore[no-untyped-def]
     frame, file_path = await _seed_frame(session, frames_dir, kept=True)
-
-    assert await _prune_frame_async(str(frame.id)) is False
-    assert file_path.exists()
-
-
-async def test_prune_respects_retention_flag(session, frames_dir, monkeypatch):  # type: ignore[no-untyped-def]
-    monkeypatch.setenv("VD_DELETE_FRAMES_WITHOUT_OBJECTS", "false")
-    frame, file_path = await _seed_frame(session, frames_dir, kept=False)
 
     assert await _prune_frame_async(str(frame.id)) is False
     assert file_path.exists()

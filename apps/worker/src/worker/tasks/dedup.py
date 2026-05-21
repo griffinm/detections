@@ -143,10 +143,10 @@ async def _dedup_clip_frames_async(clip_id: str) -> int:
         await session.commit()
         kept = len(frames) - len(pruned)
 
-    # Unlink the JPEGs of the pruned frames (force: a duplicate is always
-    # redundant, regardless of `delete_frames_without_objects`).
+    # Unlink the JPEGs of the pruned frames — a duplicate is redundant by
+    # definition.
     for fid in pruned:
-        celery_app.send_task("vd.prune_frame", args=[str(fid), True], queue="cpu")
+        celery_app.send_task("vd.prune_frame", args=[str(fid)], queue="cpu")
     await publish("clip.frames.deduped", clip_id=clip_id, pruned=len(pruned), kept=kept)
     return len(pruned)
 

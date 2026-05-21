@@ -13,7 +13,8 @@ from vd_ml.embeddings import (
 )
 from vd_ml.faces import FACE_EMBEDDING_DIM, detect_and_embed, load_face_app
 from vd_ml.training import YoloTrainResult, train_yolo
-from vd_ml.yolo import Box, ensure_base_weights, load_yolo, predict_batch, to_normalized_bbox
+from vd_ml.unload import unload_inference_models
+from vd_ml.yolo import Box, ensure_base_weights, iou, load_yolo, predict_batch, to_normalized_bbox
 
 __all__ = [
     "DINO_MODEL",
@@ -26,6 +27,7 @@ __all__ = [
     "detect_and_embed",
     "embed_crop",
     "ensure_base_weights",
+    "iou",
     "load_classifier",
     "load_dino",
     "load_face_app",
@@ -35,4 +37,5 @@ __all__ = [
     "to_normalized_bbox",
     "train_subclass_classifier",
     "train_yolo",
+    "unload_inference_models",
 ]

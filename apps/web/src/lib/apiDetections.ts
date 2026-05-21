@@ -63,6 +63,12 @@ export async function reviewFrame(frameId: string): Promise<FrameDetail> {
   ) as Promise<FrameDetail>;
 }
 
+export async function predictDetection(id: string): Promise<void> {
+  await parse(
+    await fetch(`/api/detections/${id}/predict`, { method: "POST" }),
+  );
+}
+
 export async function promoteExample(
   id: string,
   subclassId: string,

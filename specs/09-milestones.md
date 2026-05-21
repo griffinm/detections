@@ -48,8 +48,9 @@ Goal: COCO classes auto-detected on every frame.
 - GPU worker Dockerfile + image (CUDA + ultralytics).
 - `vd.detect_frame_batch` runs YOLOv11-L on batches; inserts `detections`
   rows; writes initial `detection_audits`.
-- Empty-frame pruning (`kept=false` + file delete) when
-  `delete_frames_without_objects=true`.
+- Frames with no detections stay on disk so the user can add a missing box
+  manually from the labeling UI. (`kept=false` is reserved for dedup'd
+  near-duplicates in spec 05.)
 - API routes: `GET /frames/:id` includes detections.
 - Web: frame detail page draws bboxes over the frame; per-detection
   class label + confidence pill.
@@ -209,6 +210,6 @@ Phase 7 is polish — useful but interruptible.
 | NVIDIA Container Toolkit setup friction           | Document exact versions in spec 02; provide gpu-check |
 | Catastrophic forgetting during YOLO fine-tune     | Keep COCO examples in mix; mAP regression guard      |
 | Embeddings index growth (millions of detections)  | HNSW handles it; revisit at 10M; pgvector partitioning by class as escape hatch |
-| Frame storage filling the disk                    | `delete_frames_without_objects=true` default + manual purge UI |
+| Frame storage filling the disk                    | dedup'd near-duplicates pruned by `vd.dedup_clip_frames`; manual purge UI for older clips |
 | Single-user assumptions hold across iterations    | Keep auth-shaped seams (`current_user` dependency stub) so we can add later if needed |
 | `@nxlv/python` + UV friction                      | Fallback to `nx:run-commands` per project            |

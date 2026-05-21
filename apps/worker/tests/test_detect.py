@@ -2,7 +2,7 @@
 
 The YOLO model is faked (`load_yolo` / `predict_batch` patched) so the test is
 fast and deterministic; everything else — detection rows, the audit ledger,
-empty-frame pruning, clip completion — runs for real.
+clip completion — runs for real.
 """
 
 import uuid
@@ -71,7 +71,7 @@ def capture_io(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     return SimpleNamespace(events=events, enqueued=enqueued, set_boxes=set_boxes)
 
 
-async def test_detect_persists_prunes_and_completes(session, frames_dir, capture_io):  # type: ignore[no-untyped-def]
+async def test_detect_persists_and_completes(session, frames_dir, capture_io):  # type: ignore[no-untyped-def]
     person_id = await session.scalar(select(Class.id).where(Class.name == "person"))
     clip, frames = await _seed(session, frames_dir, n_frames=2)
 
@@ -80,7 +80,7 @@ async def test_detect_persists_prunes_and_completes(session, frames_dir, capture
             Box(class_index=0, score=0.9, bbox={"x": 0.1, "y": 0.1, "w": 0.3, "h": 0.4}),
             Box(class_index=5, score=0.8, bbox={"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2}),
         ],  # class 5 (bus) is not a builtin -> dropped
-        1: [],  # no objects -> pruned
+        1: [],  # no objects -> kept on disk so the user can add a box manually
     })
 
     n = await _detect_frame_batch_async([str(f.id) for f in frames])
@@ -100,13 +100,14 @@ async def test_detect_persists_prunes_and_completes(session, frames_dir, capture
     assert audits[0].reason == "initial_prediction"
     assert audits[0].to_class_id == person_id
 
+    # Both frames stay kept=True — object-free frames are retained so the user
+    # can manually add detections YOLO missed. Dedup is the only path that
+    # flips kept=False + schedules pruning.
     await session.refresh(frames[0])
     await session.refresh(frames[1])
     assert frames[0].detect_status == "done" and frames[0].kept is True
-    assert frames[1].detect_status == "done" and frames[1].kept is False
-
-    # The object-free frame is queued for pruning.
-    assert ("vd.prune_frame", [str(frames[1].id)]) in capture_io.enqueued
+    assert frames[1].detect_status == "done" and frames[1].kept is True
+    assert not any(name == "vd.prune_frame" for name, _ in capture_io.enqueued)
 
     # All frames detected -> clip done, completion broadcast.
     await session.refresh(clip)

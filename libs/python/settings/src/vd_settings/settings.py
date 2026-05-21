@@ -49,7 +49,6 @@ class Settings(BaseSettings):
 
     # retention
     delete_processed_videos: bool = False
-    delete_frames_without_objects: bool = True
 
     # near-duplicate frame pruning
     prune_similar_frames: bool = True
@@ -73,7 +72,6 @@ OVERRIDABLE_KEYS: tuple[str, ...] = (
     "yolo_finetune_epochs",
     "yolo_finetune_imgsz",
     "delete_processed_videos",
-    "delete_frames_without_objects",
     "prune_similar_frames",
     "frame_similarity_threshold",
 )

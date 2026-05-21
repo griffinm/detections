@@ -146,6 +146,30 @@ async def delete_clip(
     return {"enqueued": True, "clip_id": str(clip_id)}
 
 
+@router.post("/{clip_id}/reextract", status_code=202)
+async def reextract_clip(
+    clip_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Wipe this clip's frames + detections and re-run extraction + detection.
+
+    Needs the source video still on disk — `delete_processed_videos` setups
+    that lose the bytes after ingest can't re-extract. The clip's status
+    flips back to `extracting`; the SSE event train (`clip.status` →
+    `clip.done`) drives the UI updates exactly like a fresh ingest.
+    """
+    clip = await db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    if clip.final_path is None or not Path(clip.final_path).exists():
+        raise HTTPException(
+            status_code=409,
+            detail="Source video is no longer on disk — cannot re-extract.",
+        )
+    enqueue("vd.reextract_frames", str(clip_id), queue="cpu")
+    return {"enqueued": True, "clip_id": str(clip_id)}
+
+
 @router.get("/{clip_id}/frames", response_model=list[FrameRead])
 async def list_frames(
     clip_id: uuid.UUID,

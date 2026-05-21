@@ -63,12 +63,11 @@ the job result + callback serve the canonical clip's detections.
 
 ### `frames`
 
-One row per extracted JPEG. A frame is set `kept=false` in two cases: it has
-no detection above `detection_min_confidence` (per the requirement), or it is
-a near-duplicate of an adjacent frame collapsed by `vd.dedup_clip_frames`
-(spec 05). In both cases the JPEG on disk is then unlinked — subject to
-`delete_frames_without_objects` for the empty-frame case, unconditionally for
-the duplicate case.
+One row per extracted JPEG. A frame is set `kept=false` only when it is a
+near-duplicate of an adjacent frame collapsed by `vd.dedup_clip_frames` (spec
+05); its JPEG is then unlinked. Frames with no detections above
+`detection_min_confidence` stay `kept=true` and on disk — YOLO can miss
+objects, and the labeling UI lets the user add a box manually after the fact.
 
 | Column        | Type         | Notes                                                |
 |---------------|--------------|------------------------------------------------------|
@@ -80,7 +79,7 @@ the duplicate case.
 | width         | int NOT NULL |                                                      |
 | height        | int NOT NULL |                                                      |
 | phash         | bytea        | 64-bit perceptual hash; near-dup pruning (`vd.dedup_clip_frames`, spec 05). NULL on pre-feature frames until `vd.backfill_frame_phash` runs |
-| kept          | bool NOT NULL DEFAULT true | false → frame is out of the working set (no objects, or a near-duplicate); its JPEG is then unlinked per the prune rules |
+| kept          | bool NOT NULL DEFAULT true | false → near-duplicate collapsed by `vd.dedup_clip_frames`; its JPEG is then unlinked |
 | detect_status | detect_status NOT NULL DEFAULT 'pending'  | enum                    |
 
 ```sql

@@ -79,12 +79,10 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
         new_detections: list[DetectionModel] = []
         for frame in frames:
             clip_ids.add(frame.clip_id)
-            kept_any = False
             for box in per_frame.get(frame, []):
                 class_id = index_to_class.get(box.class_index)
                 if class_id is None:  # COCO class outside our builtins — drop it.
                     continue
-                kept_any = True
                 detection = DetectionModel(
                     frame_id=frame.id,
                     class_id=class_id,
@@ -104,8 +102,9 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
                 session.add(detection)
                 new_detections.append(detection)
             frame.detect_status = "done"
-            if not kept_any:
-                frame.kept = False
+        # Frames with zero detections stay kept=True: YOLO can miss things, and
+        # the labeling UI lets the user add a box manually. Only dedup flips
+        # kept=False (and unlinks the JPEG) for redundant near-duplicates.
         await session.commit()
 
         # Mark clips whose frames are all detected as done. A single
@@ -145,11 +144,6 @@ async def _detect_frame_batch_async(frame_ids: list[str]) -> int:
                 if dup.callback_url:
                     callback_targets.append(dup.id)
         await session.commit()
-
-    # Prune object-free frames on the cpu queue (deletes the JPEG).
-    for frame in frames:
-        if not frame.kept:
-            celery_app.send_task("vd.prune_frame", args=[str(frame.id)], queue="cpu")
 
     # Phase 4: embed person faces (always) and sub-classed objects, then the
     # embed tasks chain into vd.assign_subclass themselves.

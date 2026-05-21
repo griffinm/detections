@@ -89,10 +89,10 @@ Idempotency: the upsert + a per-frame status make this safely re-runnable.
   with a `RuntimeError` rather than letting Ultralytics fall back to CPU at
   ~10× the latency.
 - For each frame:
-  - If zero detections → set `frames.kept=false`, schedule
-    `vd.prune_frame(frame_id)` on `cpu` (which deletes the file iff
-    `delete_frames_without_objects` is set).
-  - Else, insert a `detection` row per box: `source='model'`,
+  - Frames with zero detections stay `kept=true` and on disk — YOLO can miss
+    objects, and the labeling UI lets the user add a box manually after the
+    fact. Only `vd.dedup_clip_frames` flips `kept=false` and unlinks JPEGs.
+  - Insert a `detection` row per box: `source='model'`,
     `predicted_class_id` = lookup by yolo class index, `class_id` mirrors
     predicted at insert, `model_version_id` = active YOLO version,
     `confidence_class` = raw score.
@@ -146,6 +146,25 @@ improvement vs per-frame inference.
 - Write a `detection_audits` row (`reason='initial_prediction'`) and publish
   a `frame.updated` event.
 
+### `vd.predict_user_detection(detection_id: uuid)` *(`gpu` queue)*
+- Triggered by `POST /detections/{id}/predict` after the labeling UI's
+  ~1 s debounce on drawing or resizing a user-source box. Skips if the
+  detection is soft-deleted or `source != 'user'`.
+- Load the active YOLO model and run `predict_batch` on the **full**
+  frame JPEG (YOLO degrades on tight crops because it's trained with
+  contextual surroundings — one extra inference per drawn box is cheap
+  enough to pay for the accuracy).
+- IoU-match each YOLO box against `detection.bbox` (normalized
+  `{x,y,w,h}`); keep the highest-IoU candidate where IoU ≥ 0.3.
+- Write `predicted_class_id` + `confidence_class`. Set `class_id` to the
+  predicted class **only when it was null** — a class the user already
+  picked wins. If `class_id` ends up set, chain `vd.recognize_face` /
+  `vd.embed_object` (same logic as `vd.detect_frame_batch`) so the
+  sub-class pipeline runs.
+- Insert a `detection_audits` row (`reason='initial_prediction'`,
+  `to_class_id=matched_class | NULL`, `model_version_id=version.id`)
+  and publish `frame.updated`.
+
 ### `vd.finetune_yolo(training_run_id: uuid)`
 - The **API** creates the `training_runs` row (`status='queued'`) and enqueues
   the task; the task receives the run id. Triggered by:
@@ -159,15 +178,22 @@ improvement vs per-frame inference.
      classes are not forgotten — on frames whose JPEG survives. Symlink the
      frame JPEGs; write `<idx> <xc> <yc> <w> <h>` labels; split 80/10/10 by
      frame; write `data.yaml`.
-  3. Train from the previous checkpoint via `vd_ml.train_yolo` in a worker
+  3. Call `vd_ml.unload_inference_models()` to drop the resident YOLO,
+     InsightFace, and DINOv2 caches and `torch.cuda.empty_cache()`. Without
+     this, those three eat enough VRAM that YOLOv11-L at imgsz=960 batch=16
+     OOMs and the cuDNN context dies with
+     `CUDNN_STATUS_EXECUTION_FAILED_CUDART` after Ultralytics' auto-recovery.
+     The next inference task transparently re-loads them via the `lru_cache`
+     loaders.
+  4. Train from the previous checkpoint via `vd_ml.train_yolo` in a worker
      thread; bridge per-epoch progress back as `training_run.update` events.
      `train_yolo` passes `workers=0` to Ultralytics: the Celery prefork worker
      is daemonic and cannot fork DataLoader child processes.
-  4. Register a new `model_versions` row. **Regression guard:** activate it
+  5. Register a new `model_versions` row. **Regression guard:** activate it
      (via `vd_db.activate_model_version`) only if val mAP50-95 ≥ the previous
      active model's − 0.01 (skipped on the first-ever fine-tune). Activation
      deactivates the prior model and syncs `classes.yolo_class_index`.
-  5. Mark the run `succeeded`/`failed`; broadcast `model.active_changed`.
+  6. Mark the run `succeeded`/`failed`; broadcast `model.active_changed`.
 - Training failures (OOM, bad data) are terminal — the run is marked `failed`
   and the task returns; no Celery retry.
 
@@ -221,12 +247,11 @@ detecting; a no-op when `prune_similar_frames` is unset.
   - Otherwise set `frames.kept=false`, soft-delete its detections
     (`deleted_at=now()`, plus a `user_delete` audit row with
     `model_version_id` carried over so the ledger stays complete), and
-    schedule `vd.prune_frame(frame_id, force=True)` on `cpu` to unlink the
-    JPEG. `vd.prune_frame` gains a `force` flag for this: the no-object caller
-    leaves it `False` (file removal stays gated on
-    `delete_frames_without_objects`), but a deduped frame is redundant by
-    definition, so its JPEG is always unlinked — the gate that authorised it
-    is `prune_similar_frames`, checked once here, not per file.
+    schedule `vd.prune_frame(frame_id)` on `cpu` to unlink the JPEG. A deduped
+    frame is redundant by definition, so its JPEG is always unlinked — the
+    gate that authorised it is `prune_similar_frames`, checked once here, not
+    per file. (Dedup is now the only writer of `kept=false`; empty-detection
+    frames stay kept so the user can manually add boxes YOLO missed.)
 - Representative choice: the reference is not blindly the first frame of a
   run — among a run of mutual duplicates, keep the frame with the most
   detections, tie-broken by highest mean `confidence_class`, so the surviving
@@ -262,6 +287,33 @@ each affected clip so historical clips get the same treatment as new ones.
 - Disk reclamation: deletes the JPEG of every frame whose clip is older than
   the cutoff and nulls `frames.path`. Frame + detection rows (and the audit
   ledger) are kept — only the images go. Triggered by `POST /system/purge-frames`.
+
+### `vd.reextract_frames(clip_id: uuid)` *(`cpu` queue)*
+
+Drop a clip's frames + detections and run extraction again. Scheduled by
+`POST /api/clips/{id}/reextract` (the clip detail page's "Re-extract frames"
+button). The button is the recovery path when the original detection pass
+ran with a worse model, with a wrong fps setting, or simply failed.
+
+- Verify `clip.final_path` still exists; if not, set `clip.status='failed'`
+  with an explanatory `error` and stop — wiping state we can't recover from
+  would be destructive.
+- `DELETE FROM frames WHERE clip_id = …` (Core delete so the
+  `ondelete=CASCADE` FKs drop detections, audits, and any
+  `subclass_examples` pointing at those detections). Clear
+  `clip.processed_at` + `error`, set `status='extracting'`, reset
+  `ingested_at` to now, commit.
+- `shutil.rmtree(frames_dir)` to remove the frame JPEGs on disk.
+- Schedule `vd.extract_frames(clip_id)` on `cpu`. The status flips to
+  `detecting` once that runs, then `done` — the SSE event train is
+  identical to a fresh ingest, so the UI doesn't need a re-extract-specific
+  branch.
+
+Idempotent: the DB delete + status reset commit before any file work, so a
+crash leaves the clip in `extracting` with zero frames + zero detections,
+and re-running converges cleanly. The crop thumbnails cache
+(`<frames_dir>/.thumbs/<detection_id>_…`) is keyed by detection id and is
+left as harmless orphans — the dropped detection ids never resolve again.
 
 ### `vd.delete_clip(clip_id: uuid)` *(Phase 7, `cpu` queue)*
 - Removes a clip: deletes the frame directory, deletes the source video iff
@@ -389,7 +441,6 @@ Failure handling:
 - `VD_SUBCLASS_MIN_CONFIDENCE` — sub-class cosine threshold (default 0.55).
 - `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD` — labels needed (default 100).
 - `VD_SUBCLASS_RETRAIN_THRESHOLD` — labels needed (default 25).
-- `VD_DELETE_FRAMES_WITHOUT_OBJECTS` — bool (default true).
 - `VD_DELETE_PROCESSED_VIDEOS` — bool (default false).
 - `VD_PRUNE_SIMILAR_FRAMES` — bool (default true). Master switch for
   `vd.dedup_clip_frames`; when unset the task is a no-op.

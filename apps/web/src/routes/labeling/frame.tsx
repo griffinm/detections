@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ChevronLeft } from "lucide-react";
+import { Check, ChevronLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DeleteFrameButton } from "@/components/DeleteFrameButton";
 import { ClassPicker } from "@/components/labeling/ClassPicker";
 import { DetectionCrop } from "@/components/labeling/DetectionCrop";
 import { DetectionList } from "@/components/labeling/DetectionList";
@@ -31,6 +32,7 @@ export function LabelingFrame() {
   const actions = useDetectionActions(fid);
 
   const queueIds = useLabelingStore((s) => s.queueIds);
+  const setQueue = useLabelingStore((s) => s.setQueue);
   const resetFrame = useLabelingStore((s) => s.resetFrame);
   const setActiveFrame = useLabelingStore((s) => s.setActiveFrame);
   const [keymapOpen, setKeymapOpen] = useState(false);
@@ -38,6 +40,10 @@ export function LabelingFrame() {
   const [mobileTab, setMobileTab] = useState<"detections" | "classes">(
     "detections",
   );
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
+    "idle",
+  );
+  const savedTimer = useRef<number | null>(null);
 
   useEffect(() => {
     resetFrame();
@@ -45,6 +51,17 @@ export function LabelingFrame() {
     setActiveFrame(fid);
     return () => setActiveFrame(null);
   }, [fid, resetFrame, setActiveFrame]);
+
+  // Reset save indicator when the frame changes; clear any pending timer.
+  useEffect(() => {
+    setSaveState("idle");
+    return () => {
+      if (savedTimer.current !== null) {
+        window.clearTimeout(savedTimer.current);
+        savedTimer.current = null;
+      }
+    };
+  }, [fid]);
 
   // Select the first detection once per frame load. Keyed on fid (not `frame`)
   // so eager-save cache updates don't yank selection back to the top.
@@ -80,11 +97,41 @@ export function LabelingFrame() {
   );
   const onPrev = useCallback(() => goTo(queueIndex - 1), [goTo, queueIndex]);
   const onNext = useCallback(() => goTo(queueIndex + 1), [goTo, queueIndex]);
+  const onSave = useCallback(async () => {
+    if (savedTimer.current !== null) {
+      window.clearTimeout(savedTimer.current);
+      savedTimer.current = null;
+    }
+    setSaveState("saving");
+    try {
+      await actions.reviewFrame();
+      setSaveState("saved");
+      savedTimer.current = window.setTimeout(() => {
+        setSaveState("idle");
+        savedTimer.current = null;
+      }, 1500);
+    } catch {
+      setSaveState("idle");
+    }
+  }, [actions]);
   const onSaveNext = useCallback(async () => {
-    await actions.reviewFrame();
+    setSaveState("saving");
+    try {
+      await actions.reviewFrame();
+    } catch {
+      setSaveState("idle");
+      return;
+    }
+    // Frame change resets saveState; no need to flip to "saved" here.
     onNext();
   }, [actions, onNext]);
   const onToggleKeymap = useCallback(() => setKeymapOpen((v) => !v), []);
+  const onDeleted = useCallback(() => {
+    const next = queueIds[queueIndex + 1];
+    setQueue(queueIds.filter((id) => id !== fid));
+    if (next) navigate(`/labeling/${next}`);
+    else navigate("/labeling");
+  }, [fid, queueIds, queueIndex, navigate, setQueue]);
 
   const detectionIds = useMemo(
     () => frame?.detections.map((d) => d.id) ?? [],
@@ -132,15 +179,28 @@ export function LabelingFrame() {
           {hasQueue && ` · ${queueIndex + 1}/${queueIds.length}`}
         </span>
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => void onSaveNext()}>
+          <Button
+            size="sm"
+            onClick={() => void onSaveNext()}
+            disabled={saveState === "saving"}
+          >
+            {saveState === "saving" && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            )}
             Save &amp; Next
           </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => void actions.reviewFrame()}
+            onClick={() => void onSave()}
+            disabled={saveState === "saving"}
           >
-            Save
+            {saveState === "saving" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : saveState === "saved" ? (
+              <Check className="h-3.5 w-3.5 text-emerald-500" />
+            ) : null}
+            {saveState === "saved" ? "Saved" : "Save"}
           </Button>
           <Button
             size="sm"
@@ -157,6 +217,12 @@ export function LabelingFrame() {
           >
             End
           </Button>
+          <DeleteFrameButton
+            frameId={fid}
+            clipId={frame.clip_id}
+            frameIndex={frame.frame_index}
+            onDeleted={onDeleted}
+          />
           <Button
             size="sm"
             variant="ghost"

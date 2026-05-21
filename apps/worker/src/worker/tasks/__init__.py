@@ -9,8 +9,10 @@ from . import (
     extract,
     finetune_yolo,
     ingest,
+    predict_user_detection,
     prune,
     recognize_face,
+    reextract,
     train_subclass_classifier,
 )
 
@@ -25,7 +27,9 @@ __all__ = [
     "extract",
     "finetune_yolo",
     "ingest",
+    "predict_user_detection",
     "prune",
     "recognize_face",
+    "reextract",
     "train_subclass_classifier",
 ]

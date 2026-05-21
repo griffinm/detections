@@ -358,7 +358,6 @@ class Settings(BaseSettings):
 
     # delete vs retain
     delete_processed_videos: bool = False       # if true, remove from /processed on cleanup
-    delete_frames_without_objects: bool = True  # if true, prune empty frames' files
 
     # external job submission (spec 04 §Jobs, spec 05 vd.deliver_callback)
     webhook_timeout_sec: float = 10.0           # per-attempt POST timeout
@@ -382,7 +381,6 @@ worker. The compose file maps it in via `env_file`.
 | `VD_DETECTION_MIN_CONFIDENCE`      | `0.25`                                 | "no objects" cutoff                   |
 | `VD_SUBCLASS_MIN_CONFIDENCE`       | `0.55`                                 | cosine-sim threshold for kNN          |
 | `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD`| `100`                                 | labels needed to trigger fine-tune    |
-| `VD_DELETE_FRAMES_WITHOUT_OBJECTS` | `true`                                 | requirement says discard empties      |
 | `VD_DETECT_BATCH_SIZE`             | `16`                                   | frames per `vd.detect_frame_batch` task |
 | `VD_PRUNE_SIMILAR_FRAMES`          | `true`                                 | enable `vd.dedup_clip_frames` (spec 05) |
 | `VD_FRAME_SIMILARITY_THRESHOLD`    | `6`                                    | max pHash Hamming distance for a dup   |

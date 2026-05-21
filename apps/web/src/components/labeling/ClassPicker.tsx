@@ -35,8 +35,27 @@ export function ClassPicker({
     : undefined;
 
   const pickClass = (classId: string): void => {
-    if (selectedId) void actions.update(selectedId, { class_id: classId });
-    else setDefaultClass(classId);
+    if (selectedId) {
+      // Clicking the active class clears it (and the sub-class, since
+      // a sub-class without its class is meaningless). Picking a *different*
+      // class reassigns; the existing PATCH handler audits the change.
+      const isActive = selectedDet?.class_id === classId;
+      void actions.update(
+        selectedId,
+        isActive ? { class_id: null, subclass_id: null } : { class_id: classId },
+      );
+    } else {
+      setDefaultClass(classId);
+    }
+  };
+
+  const pickSubclass = (subclassId: string): void => {
+    if (!selectedId) return;
+    const isActive = selectedDet?.subclass_id === subclassId;
+    void actions.update(
+      selectedId,
+      { subclass_id: isActive ? null : subclassId },
+    );
   };
 
   return (
@@ -73,10 +92,7 @@ export function ClassPicker({
                 {subs.map((s, j) => (
                   <button
                     key={s.id}
-                    onClick={() => {
-                      if (selectedId)
-                        void actions.update(selectedId, { subclass_id: s.id });
-                    }}
+                    onClick={() => pickSubclass(s.id)}
                     className={cn(
                       "flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-muted",
                       selectedDet?.subclass_id === s.id && "ring-1 ring-ring",

@@ -7,7 +7,7 @@ async def test_list_settings_reports_defaults(client):  # type: ignore[no-untype
     items = {s["key"]: s for s in (await client.get("/api/settings")).json()}
     assert "detect_batch_size" in items
     assert items["detect_batch_size"]["type"] == "integer"
-    assert items["delete_frames_without_objects"]["type"] == "boolean"
+    assert items["delete_processed_videos"]["type"] == "boolean"
     # With no overrides stored, effective value equals the env default.
     assert items["detect_batch_size"]["value"] == items["detect_batch_size"]["default"]
 

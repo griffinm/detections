@@ -134,6 +134,40 @@ async def test_delete_is_soft_audited_and_hidden(client, session):  # type: igno
     assert len(frame_resp.json()["detections"]) == 1
 
 
+async def test_predict_endpoint_enqueues_gpu_task(  # type: ignore[no-untyped-def]
+    client, session, monkeypatch: pytest.MonkeyPatch,
+):
+    """`POST /detections/{id}/predict` schedules the gpu worker task; the
+    response itself is fire-and-forget (202) — the prediction reaches the UI
+    via SSE after the worker writes it back."""
+    from api.routers import detections as det_mod
+
+    _, frame = await _seed_frame(session)
+    det = DetectionModel(
+        frame_id=frame.id, class_id=None,
+        bbox={"x": 0.1, "y": 0.1, "w": 0.3, "h": 0.3}, source="user",
+        reviewed=True,
+    )
+    session.add(det)
+    await session.commit()
+
+    calls: list[tuple[str, tuple, str]] = []
+
+    def fake_enqueue(name: str, *args: object, queue: str) -> None:
+        calls.append((name, args, queue))
+
+    monkeypatch.setattr(det_mod, "enqueue", fake_enqueue)
+
+    resp = await client.post(f"/api/detections/{det.id}/predict")
+    assert resp.status_code == 202
+    assert calls == [("vd.predict_user_detection", (str(det.id),), "gpu")]
+
+
+async def test_predict_endpoint_404s_for_missing(client):  # type: ignore[no-untyped-def]
+    resp = await client.post(f"/api/detections/{uuid.uuid4()}/predict")
+    assert resp.status_code == 404
+
+
 async def test_crop_endpoint_returns_cached_jpeg(  # type: ignore[no-untyped-def]
     client, session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):

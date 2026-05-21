@@ -36,6 +36,24 @@ def to_normalized_bbox(
     return {"x": nx, "y": ny, "w": nw, "h": nh}
 
 
+def iou(a: dict[str, float], b: dict[str, float]) -> float:
+    """Intersection-over-union of two normalized `{x,y,w,h}` bboxes.
+
+    Returns 0.0 for non-overlapping or degenerate boxes. Both inputs use the
+    same `{x,y,w,h}` shape stored on `detections.bbox`.
+    """
+    ax1, ay1, ax2, ay2 = a["x"], a["y"], a["x"] + a["w"], a["y"] + a["h"]
+    bx1, by1, bx2, by2 = b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0.0:
+        return 0.0
+    union = a["w"] * a["h"] + b["w"] * b["h"] - inter
+    return inter / union if union > 0.0 else 0.0
+
+
 def ensure_base_weights(models_dir: Path, model_name: str = "yolo11l.pt") -> Path:
     """Return the path to the base YOLO weights, downloading them once if absent.
 

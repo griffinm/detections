@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from vd_ml import Box, predict_batch, to_normalized_bbox
+from vd_ml import Box, iou, predict_batch, to_normalized_bbox
 
 
 def test_to_normalized_bbox_basic() -> None:
@@ -28,6 +28,30 @@ def test_to_normalized_bbox_sorts_corners() -> None:
     swapped = to_normalized_bbox(300, 250, 100, 50, img_w=400, img_h=500)
     ordered = to_normalized_bbox(100, 50, 300, 250, img_w=400, img_h=500)
     assert swapped == ordered
+
+
+def test_iou_identical_boxes_is_one() -> None:
+    b = {"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.4}
+    assert iou(b, b) == pytest.approx(1.0)
+
+
+def test_iou_disjoint_is_zero() -> None:
+    a = {"x": 0.0, "y": 0.0, "w": 0.2, "h": 0.2}
+    b = {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2}
+    assert iou(a, b) == 0.0
+
+
+def test_iou_half_overlap() -> None:
+    # Two unit-area boxes sharing half their area → IoU = 0.5 / 1.5 = 1/3.
+    a = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+    b = {"x": 0.5, "y": 0.0, "w": 1.0, "h": 1.0}
+    assert iou(a, b) == pytest.approx(1 / 3)
+
+
+def test_iou_handles_touching_edges_as_zero() -> None:
+    a = {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5}
+    b = {"x": 0.5, "y": 0.0, "w": 0.5, "h": 0.5}
+    assert iou(a, b) == 0.0
 
 
 class _FakeTensor:

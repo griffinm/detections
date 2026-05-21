@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -15,8 +16,57 @@ import {
 } from "@/components/ui/dialog";
 import { DeleteFrameButton } from "@/components/DeleteFrameButton";
 import { formatBytes, formatDuration } from "@/lib/format";
-import { useDeleteClip } from "@/hooks/useClips";
+import { useDeleteClip, useReextractClip } from "@/hooks/useClips";
 import { useClip, useClipFrames, type Frame } from "@/hooks/useFrames";
+
+function ReextractButton({ id, filename }: { id: string; filename: string }) {
+  const reextract = useReextractClip();
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <RefreshCw className="h-4 w-4" /> Re-extract frames
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Re-extract frames?</DialogTitle>
+          <DialogDescription>
+            All existing frames and detections for “{filename}” will be
+            deleted, then frames will be re-extracted from the source video
+            and detection will run again. Any examples promoted from this
+            clip will also be lost. The source video itself is untouched.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={reextract.isPending}
+            onClick={() =>
+              reextract.mutate(id, {
+                onSuccess: () => {
+                  toast.success("Re-extraction queued");
+                  setOpen(false);
+                },
+                onError: (err) =>
+                  toast.error(
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to re-extract clip",
+                  ),
+              })
+            }
+          >
+            Re-extract
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function DeleteClipButton({ id, filename }: { id: string; filename: string }) {
   const navigate = useNavigate();
@@ -160,7 +210,12 @@ export function ClipDetail() {
         }
         meta={clip && <StatusBadge status={clip.status} />}
         actions={
-          clip && <DeleteClipButton id={clip.id} filename={clip.filename} />
+          clip && (
+            <>
+              <ReextractButton id={clip.id} filename={clip.filename} />
+              <DeleteClipButton id={clip.id} filename={clip.filename} />
+            </>
+          )
         }
       />
 

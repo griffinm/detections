@@ -26,8 +26,6 @@ interface Props {
   initial?: VdClass;
 }
 
-const MAX_SUGGESTIONS = 8;
-
 export function ClassFormDialog({ open, onOpenChange, initial }: Props) {
   const isEdit = initial != null;
   const create = useCreateClass();
@@ -46,7 +44,10 @@ export function ClassFormDialog({ open, onOpenChange, initial }: Props) {
       setName(initial?.name ?? "");
       setColor(initial?.color_hex ?? "#22c55e");
       setYoloIndex(initial?.yolo_class_index ?? null);
-      setListOpen(false);
+      // Open the catalog immediately when creating: this effect runs after the
+      // input's autoFocus has already fired onFocus, so leaving it false would
+      // override that and hide the list until the user types.
+      setListOpen(initial == null);
       setHighlight(0);
     }
   }, [open, initial]);
@@ -55,10 +56,9 @@ export function ClassFormDialog({ open, onOpenChange, initial }: Props) {
     if (isEdit) return [];
     const entries = catalog.data ?? [];
     const q = name.trim().toLowerCase();
-    const matches = q
+    return q
       ? entries.filter((e) => e.name.toLowerCase().includes(q))
       : entries;
-    return matches.slice(0, MAX_SUGGESTIONS);
   }, [catalog.data, name, isEdit]);
 
   const exactCatalogMatch = useMemo(
@@ -192,7 +192,9 @@ export function ClassFormDialog({ open, onOpenChange, initial }: Props) {
                       <span className="text-xs text-muted-foreground">
                         {entry.in_use
                           ? "(already added)"
-                          : `YOLO #${entry.yolo_class_index}`}
+                          : entry.yolo_class_index !== null
+                            ? `YOLO #${entry.yolo_class_index}`
+                            : "(not in active model)"}
                       </span>
                     </li>
                   ))}

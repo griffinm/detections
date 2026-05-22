@@ -40,7 +40,7 @@ export function useClasses() {
 
 export interface ClassCatalogEntry {
   name: string;
-  yolo_class_index: number;
+  yolo_class_index: number | null;
   in_use: boolean;
 }
 

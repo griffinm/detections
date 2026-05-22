@@ -140,11 +140,18 @@ async def test_catalog_falls_back_to_coco80_without_active_yolo(client):  # type
     assert by_name["cat"]["in_use"] is False
 
 
-async def test_catalog_lists_active_yolo_class_names(client, session):  # type: ignore[no-untyped-def]
+async def test_catalog_unions_active_yolo_class_names_with_coco80(client, session):  # type: ignore[no-untyped-def]
+    """A trimmed fine-tune doesn't hide the COCO-80 names from the picker.
+
+    The active model's indices win for names it knows; COCO-only names appear
+    with a null index so a stale COCO index can't disagree with whatever the
+    fine-tune emits at that slot.
+    """
     session.add(
         ModelVersion(
-            kind="yolo", name="base", weights_path="/m.pt",
-            metrics={"class_names": {"0": "person", "15": "cat", "55": "cake"}},
+            kind="yolo", name="ft", weights_path="/m.pt",
+            # A fine-tune with custom classes — index 2 = "bear", not COCO's "car".
+            metrics={"class_names": {"0": "person", "1": "dog", "2": "bear"}},
             is_active=True,
         )
     )
@@ -153,12 +160,19 @@ async def test_catalog_lists_active_yolo_class_names(client, session):  # type: 
     resp = await client.get("/api/classes/catalog")
     assert resp.status_code == 200
     by_name = {e["name"]: e for e in resp.json()}
-    assert set(by_name) == {"person", "cat", "cake"}
-    assert by_name["cat"]["yolo_class_index"] == 15
-    # `person` is one of the seeded builtins → in_use; cat/cake are fresh.
+    # All COCO-80 names plus the fine-tune's custom additions (bear is already
+    # in COCO-80; only truly new names enlarge the set).
+    assert len(by_name) >= 80
+    # Active model's index wins where it knows the name.
+    assert by_name["person"]["yolo_class_index"] == 0
+    assert by_name["dog"]["yolo_class_index"] == 1
+    assert by_name["bear"]["yolo_class_index"] == 2
+    # COCO-only name (active model doesn't emit it) → null index.
+    assert by_name["cat"]["yolo_class_index"] is None
+    assert by_name["car"]["yolo_class_index"] is None
+    # `person` is one of the seeded builtins → in_use.
     assert by_name["person"]["in_use"] is True
     assert by_name["cat"]["in_use"] is False
-    assert by_name["cake"]["in_use"] is False
 
 
 async def test_create_class_with_yolo_class_index(client):  # type: ignore[no-untyped-def]

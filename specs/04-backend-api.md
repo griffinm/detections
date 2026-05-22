@@ -253,12 +253,16 @@ same-host LAN.
   the new class to that YOLO output index so detections of that class are
   routed to the row immediately (no model re-activation needed). The index
   must be unique across `classes` — duplicates are rejected with `409`.
-- `GET /classes/catalog` — names known to the active base YOLO model
-  (`kind="yolo"`, `target_class_id IS NULL`, `is_active=true`), read from
-  `ModelVersion.metrics["class_names"]`. Each entry is
-  `{name, yolo_class_index, in_use}`; `in_use` flags names already present
-  in `classes`. Empty list when no YOLO model is active. Powers the
-  catalog picker in the "New class" dialog.
+- `GET /classes/catalog` — names offered to the "New class" picker: the
+  union of the active base YOLO model's class list (`kind="yolo"`,
+  `target_class_id IS NULL`, `is_active=true`, read from
+  `ModelVersion.metrics["class_names"]`) and the COCO-80 baseline. Each
+  entry is `{name, yolo_class_index, in_use}`. The active model's index
+  wins where both know the name; names only present in COCO-80 (e.g. ones
+  a fine-tune has trimmed away) return `yolo_class_index=null` —
+  `_sync_yolo_class_index` fills the right value if a model that knows
+  the name is later activated. `in_use` flags names already in `classes`.
+  Falls back to pure COCO-80 when no YOLO model is active.
 - `GET /classes/{id}/subclasses`, `POST /classes/{id}/subclasses` — creating
   the *first* active sub-class enqueues `vd.backfill_embeddings`.
 - `POST /classes/{id}/rescan-subclasses` — manually re-enqueue

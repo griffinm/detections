@@ -25,10 +25,17 @@ class ClassCreate(BaseModel):
 
 
 class ClassCatalogEntry(BaseModel):
-    """A name from the active YOLO model's class list, offered to the picker."""
+    """A name offered to the new-class picker.
+
+    Sourced from the union of the active YOLO model's class list and the COCO-80
+    baseline: the picker should expose every name a base or fine-tuned YOLO
+    plausibly knows, not just whatever the currently active model emits.
+    `yolo_class_index` is the active model's index for the name, or `null` when
+    the active model can't detect it (only the COCO-80 baseline knows the name).
+    """
 
     name: str
-    yolo_class_index: int
+    yolo_class_index: int | None
     in_use: bool
 
 

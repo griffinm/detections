@@ -44,15 +44,18 @@ async def list_classes(db: AsyncSession = Depends(get_db)) -> list[Class]:
 async def list_class_catalog(
     db: AsyncSession = Depends(get_db),
 ) -> list[ClassCatalogEntry]:
-    """Names known to the active YOLO model, marked with `in_use` for those
-    already represented in `classes`.
+    """Names offered to the picker: COCO-80 ∪ active YOLO model's class list.
 
-    Source of truth is `ModelVersion.metrics["class_names"]` for the active
-    base YOLO model — the same dict consulted by `_sync_yolo_class_index`.
-    Falls back to the standard COCO-80 list (what every off-the-shelf YOLO
-    model ships with) when the worker hasn't yet registered a model — that
-    way the picker is usable on a fresh install, before any clip has been
-    processed.
+    The active model's `ModelVersion.metrics["class_names"]` (the same dict
+    consulted by `_sync_yolo_class_index`) supplies the indices the model
+    actually emits — including any custom classes a fine-tune introduced.
+    COCO-80 fills in the baseline names that every off-the-shelf YOLO knows
+    about, even when a fine-tune has trimmed the active model down to a
+    handful of classes. For names only present in COCO-80 (not in the active
+    model), `yolo_class_index` is null: storing the COCO index would
+    disagree with whatever the active fine-tune emits at that slot, and
+    `_sync_yolo_class_index` will fill the right value if/when a model that
+    knows the name is activated.
     """
     active = await db.scalar(
         select(ModelVersion).where(
@@ -61,20 +64,25 @@ async def list_class_catalog(
             ModelVersion.is_active.is_(True),
         )
     )
-    class_names: dict[str, str] = (active.metrics or {}).get("class_names", {}) if active else {}
-    if not class_names:
-        class_names = {str(idx): name for idx, name in COCO_80_NAMES.items()}
-
-    taken_names = set(
-        (await db.scalars(select(Class.name))).all()
+    active_class_names: dict[str, str] = (
+        (active.metrics or {}).get("class_names", {}) if active else {}
     )
+    active_index_by_name: dict[str, int] = {
+        name: int(idx) for idx, name in active_class_names.items()
+    }
+
+    taken_names = set((await db.scalars(select(Class.name))).all())
+
+    # Union of COCO-80 baseline and the active model's names. Active model's
+    # index wins where both know the name; COCO-only names get a null index.
+    names: set[str] = set(COCO_80_NAMES.values()) | set(active_index_by_name)
     entries = [
         ClassCatalogEntry(
             name=name,
-            yolo_class_index=int(idx),
+            yolo_class_index=active_index_by_name.get(name),
             in_use=name in taken_names,
         )
-        for idx, name in class_names.items()
+        for name in names
     ]
     entries.sort(key=lambda e: e.name)
     return entries

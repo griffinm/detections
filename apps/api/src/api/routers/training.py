@@ -8,11 +8,18 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import enqueue, get_db
-from api.schemas.training import TrainingRunCreate, TrainingRunDetail, TrainingRunRead
+from api.schemas.common import Paginated
+from api.schemas.training import (
+    TrainingRunCounts,
+    TrainingRunCreate,
+    TrainingRunDetail,
+    TrainingRunRead,
+)
+from api.utils.pagination import CursorPage, apply_keyset, build_page, cursor_params
 from vd_db.models import TrainingRun
 
 router = APIRouter(prefix="/training-runs", tags=["training"])
@@ -20,6 +27,17 @@ router = APIRouter(prefix="/training-runs", tags=["training"])
 _TASK_BY_KIND = {
     "yolo": "vd.finetune_yolo",
     "classifier": "vd.train_subclass_classifier",
+}
+
+# Status → bucket mapping. Mirrors `statusBucket()` in apps/web/src/routes/training.tsx.
+# The /counts endpoint and the list endpoint's `status` filter both speak buckets,
+# not raw enum values — keep the two ends in sync. Enum values come from the
+# `run_status` Postgres type: ('queued','running','succeeded','failed','cancelled').
+_STATUS_BUCKETS: dict[str, tuple[str, ...]] = {
+    "running": ("running",),
+    "done": ("succeeded",),
+    "failed": ("failed",),
+    "queued": ("queued", "cancelled"),
 }
 
 
@@ -33,6 +51,16 @@ def _log_tail(path: str | None, lines: int = 200) -> str | None:
         return "\n".join(file.read_text().splitlines()[-lines:])
     except OSError:
         return None
+
+
+def _status_clause(status: str | None):
+    """Translate a status bucket (or raw enum) into a SQL clause."""
+    if status is None:
+        return None
+    bucket = _STATUS_BUCKETS.get(status)
+    if bucket is not None:
+        return TrainingRun.status.in_(bucket)
+    return TrainingRun.status == status
 
 
 @router.post("", response_model=TrainingRunRead, status_code=201)
@@ -60,18 +88,54 @@ async def create_training_run(
     return run
 
 
-@router.get("", response_model=list[TrainingRunRead])
+@router.get("", response_model=Paginated[TrainingRunRead])
 async def list_training_runs(
     status: str | None = Query(default=None),
     kind: str | None = Query(default=None),
+    page: CursorPage = Depends(cursor_params),
     db: AsyncSession = Depends(get_db),
-) -> list[TrainingRun]:
-    query = select(TrainingRun).order_by(TrainingRun.created_at.desc())
-    if status is not None:
-        query = query.where(TrainingRun.status == status)
+) -> Paginated[TrainingRunRead]:
+    base = select(TrainingRun)
+    status_clause = _status_clause(status)
+    if status_clause is not None:
+        base = base.where(status_clause)
     if kind is not None:
-        query = query.where(TrainingRun.kind == kind)
-    return list(await db.scalars(query))
+        base = base.where(TrainingRun.kind == kind)
+
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+
+    query = apply_keyset(
+        base, TrainingRun.created_at, TrainingRun.id, page.cursor, direction="desc"
+    ).limit(page.limit + 1)
+    rows = list(await db.scalars(query))
+
+    return build_page(
+        rows,
+        sort_attr="created_at",
+        id_attr="id",
+        limit=page.limit,
+        total=total,
+        item_cls=TrainingRunRead,
+    )
+
+
+# Declared before `/{run_id}` so the literal path wins the route match.
+@router.get("/counts", response_model=TrainingRunCounts)
+async def get_training_run_counts(
+    kind: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> TrainingRunCounts:
+    """Faceted bucket counts for the stat strip. Respects `kind`, ignores `status`."""
+    base = select(func.count()).select_from(TrainingRun)
+    if kind is not None:
+        base = base.where(TrainingRun.kind == kind)
+
+    counts: dict[str, int] = {"all": await db.scalar(base) or 0}
+    for bucket, statuses in _STATUS_BUCKETS.items():
+        counts[bucket] = (
+            await db.scalar(base.where(TrainingRun.status.in_(statuses))) or 0
+        )
+    return TrainingRunCounts(**counts)
 
 
 @router.get("/{run_id}", response_model=TrainingRunDetail)

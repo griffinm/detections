@@ -5,7 +5,8 @@
 - **FastAPI** with **`uvicorn`** in dev (gunicorn + uvicorn workers in prod).
 - **SQLAlchemy 2.x async** via `asyncpg`.
 - **Pydantic v2** models (request/response).
-- **`fastapi-pagination`** for cursor pagination on list endpoints.
+- **Cursor pagination** via the in-tree helper in
+  `apps/api/src/api/utils/pagination.py` — see "Pagination" below.
 - **SSE** (server-sent events) for live processing progress (simpler than
   WebSockets, and we only need server→client).
 - Configuration via `libs/python/settings.Settings`.
@@ -105,7 +106,8 @@ async def get_celery():
 
 ## Endpoint catalog
 
-All paths prefixed with `/api`. Pagination is cursor-based (`?cursor=…&limit=…`).
+All paths prefixed with `/api`. List endpoints use cursor pagination — see
+"Pagination" below for the request shape, response envelope, and shared helper.
 
 ### Clips
 - `GET /clips?status=&q=` — list, paginated.
@@ -334,7 +336,15 @@ same-host LAN.
 - `GET /models?kind=` — list versions.
 - `POST /models/{id}/activate` — switch active weights.
 - `POST /training-runs` — body: `{ kind, target_class_id? }` — enqueues a job.
-- `GET /training-runs?status=` — list.
+- `GET /training-runs?status=&kind=&cursor=&limit=` — list, cursor-paginated
+  (`Paginated[TrainingRunRead]`). `status` accepts the bucket form
+  (`running` / `done` / `failed` / `queued`) that the frontend stat strip
+  emits — bucket-to-enum mapping lives in the router next to the route.
+- `GET /training-runs/counts?kind=` — `{ all, running, done, failed, queued }`.
+  Respects `kind`, ignores `status` — the stat strip needs to show what each
+  bucket *would* contain under the current kind, independent of the active
+  status filter. (This is the canonical shape for any future faceted-counts
+  endpoint; see "Pagination" below.)
 - `GET /training-runs/{id}` — incl. tail of log + metrics.
 
 ### Metrics *(Phase 6 — computed on-the-fly, no materialized view)*
@@ -370,6 +380,47 @@ same-host LAN.
   - `training_run.update`
   - `queue.depth` (periodic)
   Drives the live UI without polling.
+
+## Pagination
+
+The canonical contract for list endpoints. Helper:
+`apps/api/src/api/utils/pagination.py` — the source of truth, do not duplicate
+the encoding logic in routes.
+
+**Request.** `?cursor=<opaque>&limit=<int>` plus the resource's own filters.
+`limit` defaults to 50 and is clamped to `[1, 200]`. Routes consume the
+`cursor_params` dependency to get a parsed `(cursor, limit)`.
+
+**Response envelope** — `Paginated[T]` from
+`apps/api/src/api/schemas/common.py`:
+```json
+{ "items": [...], "total": 739, "next_cursor": "eyJ2Ijoi..." }
+```
+`total` is the **filtered** count (matches what's being scrolled). `next_cursor`
+is `null` on the last page.
+
+**Cursor.** Opaque to consumers — current format is base64-url JSON over
+`(sort_value, id)`, but **do not document the bytes**; the helper may change
+without notice. Decoding is permissive: a cursor whose anchor row has since
+been deleted is still a valid keyset anchor (keyset paging slices "rows
+strictly older than the encoded value, id" — deletion doesn't break that).
+Only malformed cursors return `400`.
+
+**Ordering.** Always `(sort_col, id) DESC` (descending), where `sort_col` is
+typically `created_at`. The id is the stable tiebreaker — under UUID v7 PKs
+the id is itself time-sorted, so the composite key is monotonic.
+
+**Indexing.** Each paginated resource needs a composite
+`(sort_col DESC, id DESC)` btree to keep the keyset query plan an index-only
+scan — e.g. `ix_training_runs_created_at_id_desc`.
+
+**Faceted counts** (e.g. status buckets in a stat strip): expose at
+`<resource>/counts?<orthogonal_filters>` returning a small dict. Counts
+respect the orthogonal filters (e.g. `kind`) but **never** the facet itself
+(e.g. `status`) — the strip's job is to let the user pivot between buckets,
+so each bucket count must show what it would contain. Don't inline counts in
+the list envelope: filter and facet have different lifetimes and the
+dedicated endpoint is independently cacheable.
 
 ## SSE plumbing
 
@@ -463,8 +514,6 @@ HTTP status codes are conventional (404, 409, 422).
 
 ## Open questions
 
-- **Pagination keys**: cursor encoding — use `(created_at, id)` for stable
-  ordering. Document; do not surface format to consumers.
 - **CORS**: dev server allows `http://localhost:5173`. Single-user so no
   multi-origin concerns.
 - **CSRF**: none, no cookies, no auth.

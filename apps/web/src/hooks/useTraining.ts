@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCursorInfiniteQuery } from "./usePaginated";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -18,13 +19,43 @@ export interface TrainingRunDetail extends TrainingRun {
   log_tail: string | null;
 }
 
-export function useTrainingRuns() {
-  return useQuery<TrainingRun[]>({
-    queryKey: ["trainingRuns"],
+/** Status buckets the API speaks; mirrors `_STATUS_BUCKETS` in the router and
+ *  `statusBucket()` in the training page. */
+export type TrainingRunStatusBucket = "running" | "done" | "failed" | "queued";
+
+export interface TrainingRunFilters {
+  kind?: "yolo" | "classifier";
+  status?: TrainingRunStatusBucket;
+}
+
+/** Cursor-paginated list. Filters become part of the query key so changing
+ *  them tears down the old infinite query and starts a fresh page 1. */
+export function useTrainingRunsInfinite(filters: TrainingRunFilters = {}) {
+  return useCursorInfiniteQuery<TrainingRun>({
+    queryKey: ["trainingRuns", filters],
+    url: "/api/training-runs",
+    params: { kind: filters.kind, status: filters.status },
+    limit: 50,
+  });
+}
+
+export interface TrainingRunCounts {
+  all: number;
+  running: number;
+  done: number;
+  failed: number;
+  queued: number;
+}
+
+/** Faceted counts for the stat strip — respects `kind`, ignores `status`. */
+export function useTrainingRunCounts(filters: { kind?: TrainingRunFilters["kind"] } = {}) {
+  return useQuery<TrainingRunCounts>({
+    queryKey: ["trainingRuns", "counts", filters],
     queryFn: async () => {
-      const res = await fetch("/api/training-runs");
-      if (!res.ok) throw new Error("Failed to fetch training runs");
-      return res.json() as Promise<TrainingRun[]>;
+      const qs = filters.kind ? `?kind=${filters.kind}` : "";
+      const res = await fetch(`/api/training-runs/counts${qs}`);
+      if (!res.ok) throw new Error("Failed to fetch training run counts");
+      return res.json() as Promise<TrainingRunCounts>;
     },
   });
 }

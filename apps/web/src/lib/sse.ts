@@ -63,6 +63,13 @@ export function useLiveEvents() {
             break;
           }
           case "training_run.update":
+            // The list query is infinite-paged via useCursorInfiniteQuery; this
+            // invalidation refetches every loaded page so visible row badges
+            // catch the status transition. Keyset cursors are stable across
+            // inserts, so this is correct even when a new run lands at the
+            // top mid-scroll. With maxPages=10 and infrequent status events,
+            // the refetch volume is small enough to not warrant page-1-only
+            // surgery (which TanStack v5 doesn't support cleanly anyway).
             void qc.invalidateQueries({ queryKey: ["trainingRuns"] });
             if (e.training_run_id) {
               void qc.invalidateQueries({

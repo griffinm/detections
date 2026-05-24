@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronRight,
   ExternalLink,
+  Loader2,
   Sparkles,
   Tag,
   Target,
@@ -16,13 +17,15 @@ import {
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { TableSentinelRow } from "@/components/ui/InfiniteScrollSentinel";
 import { formatElapsed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useClasses, type VdClass } from "@/hooks/useClasses";
 import {
   useStartTraining,
   useTrainingRun,
-  useTrainingRuns,
+  useTrainingRunCounts,
+  useTrainingRunsInfinite,
   type TrainingRun,
   type TrainingRunDetail,
 } from "@/hooks/useTraining";
@@ -75,13 +78,6 @@ function runDurationSec(run: TrainingRun, now: number): number | null {
   if (!run.started_at) return null;
   const end = run.finished_at ? new Date(run.finished_at).getTime() : now;
   return (end - new Date(run.started_at).getTime()) / 1000;
-}
-
-function statusBucket(status: string): StatusBucket {
-  if (status === "running") return "running";
-  if (status === "succeeded" || status === "done") return "done";
-  if (status === "failed") return "failed";
-  return "queued";
 }
 
 /** Relative time, e.g. "12s ago", "4m ago", "2d ago". */
@@ -637,41 +633,38 @@ function EmptyState({
 }
 
 export function TrainingPage() {
-  const { data: runs = [], isPending } = useTrainingRuns();
   const { data: classes = [] } = useClasses();
   const startTraining = useStartTraining();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
+  const kindParam = kindFilter === "all" ? undefined : kindFilter;
+  const statusParam = statusFilter === "all" ? undefined : statusFilter;
+
+  const {
+    rows,
+    total,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    isPending,
+  } = useTrainingRunsInfinite({ kind: kindParam, status: statusParam });
+  const { data: counts } = useTrainingRunCounts({ kind: kindParam });
+
   const classById = useMemo(
     () => new Map(classes.map((c) => [c.id, c])),
     [classes],
   );
 
-  // Re-render every second so "running for Xs" ticks on the detail panel.
+  // Re-render every second so the "running for Xs" duration ticks on both
+  // the detail panel and any visible running rows.
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (!runs.some((r) => r.status === "running")) return;
+    if (!rows.some((r) => r.status === "running")) return;
     const handle = window.setInterval(() => setTick((t) => t + 1), 1000);
     return () => window.clearInterval(handle);
-  }, [runs]);
-
-  const counts = useMemo(() => {
-    const c = { all: runs.length, running: 0, done: 0, failed: 0, queued: 0 };
-    for (const r of runs) c[statusBucket(r.status)] += 1;
-    return c;
-  }, [runs]);
-
-  const visibleRuns = useMemo(
-    () =>
-      runs.filter(
-        (run) =>
-          (kindFilter === "all" || run.kind === kindFilter) &&
-          (statusFilter === "all" || statusBucket(run.status) === statusFilter),
-      ),
-    [runs, kindFilter, statusFilter],
-  );
+  }, [rows]);
 
   const startFinetune = async (): Promise<void> => {
     try {
@@ -682,6 +675,11 @@ export function TrainingPage() {
       toast.error("Could not start training");
     }
   };
+
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const loadMore = useMemo(() => () => void fetchNextPage(), [fetchNextPage]);
+  const filtersActive = kindFilter !== "all" || statusFilter !== "all";
+  const showEmptyState = !isPending && !filtersActive && rows.length === 0;
 
   const now = Date.now();
 
@@ -705,7 +703,7 @@ export function TrainingPage() {
           <div className="h-9 animate-pulse rounded bg-muted" />
           <div className="h-64 animate-pulse rounded bg-muted" />
         </div>
-      ) : runs.length === 0 ? (
+      ) : showEmptyState ? (
         <EmptyState
           onStart={() => void startFinetune()}
           busy={startTraining.isPending}
@@ -717,7 +715,7 @@ export function TrainingPage() {
               <StatChip
                 key={f.value}
                 label={f.label}
-                count={counts[f.value]}
+                count={counts?.[f.value] ?? 0}
                 active={statusFilter === f.value}
                 tone={f.value === "all" ? "neutral" : f.value}
                 onClick={() => setStatusFilter(f.value)}
@@ -736,8 +734,11 @@ export function TrainingPage() {
           </div>
 
           <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-            <div className="overflow-auto rounded-lg border border-border bg-card">
-              {visibleRuns.length === 0 ? (
+            <div
+              ref={tableScrollRef}
+              className="overflow-auto rounded-lg border border-border bg-card"
+            >
+              {rows.length === 0 ? (
                 <div className="p-6 text-sm text-muted-foreground">
                   No runs match the current filters.
                 </div>
@@ -758,7 +759,7 @@ export function TrainingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleRuns.map((run) => {
+                    {rows.map((run) => {
                       const size = trainingSetSize(run);
                       const cls = run.target_class_id
                         ? classById.get(run.target_class_id)
@@ -830,6 +831,25 @@ export function TrainingPage() {
                         </tr>
                       );
                     })}
+                    <TableSentinelRow
+                      colSpan={6}
+                      hasMore={hasNextPage}
+                      isFetching={isFetchingNextPage}
+                      onLoadMore={loadMore}
+                      rootRef={tableScrollRef}
+                    >
+                      {isFetchingNextPage ? (
+                        <div className="flex items-center justify-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Loading more…
+                        </div>
+                      ) : !hasNextPage ? (
+                        <div className="px-3 py-2 text-center text-[11px] text-muted-foreground">
+                          End of results — {total.toLocaleString()}{" "}
+                          {total === 1 ? "run" : "runs"} total
+                        </div>
+                      ) : null}
+                    </TableSentinelRow>
                   </tbody>
                 </table>
               )}

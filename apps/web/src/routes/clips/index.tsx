@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { formatBytes, formatDuration } from "@/lib/format";
+import { formatBytes, formatClipName, formatDuration } from "@/lib/format";
 import {
   type Clip,
   useClipsList,
@@ -30,13 +30,14 @@ const UPLOAD_ACCEPT = "video/*,.mp4,.mkv,.avi,.mov,.m4v,.webm";
 function DeleteClipButton({ clip }: { clip: Clip }) {
   const del = useDeleteClip();
   const [open, setOpen] = useState(false);
+  const name = formatClipName(clip.created_at);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"
           size="icon"
-          aria-label={`Delete ${clip.filename}`}
+          aria-label={`Delete ${name}`}
           onClick={(e) => e.stopPropagation()}
         >
           <Trash2 className="h-4 w-4 text-muted-foreground" />
@@ -46,7 +47,7 @@ function DeleteClipButton({ clip }: { clip: Clip }) {
         <DialogHeader>
           <DialogTitle>Delete clip?</DialogTitle>
           <DialogDescription>
-            “{clip.filename}” and all of its frames and detections will be
+            “{name}” and all of its frames and detections will be
             permanently removed. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
@@ -98,7 +99,7 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
         )}
       </td>
       <td className="max-w-[280px] truncate px-4 py-3 text-sm font-medium">
-        {clip.filename}
+        {formatClipName(clip.created_at)}
       </td>
       <td className="px-4 py-3">
         <StatusBadge status={clip.status} />
@@ -184,7 +185,7 @@ export function ClipsList() {
           <thead className="bg-muted/50 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="w-20 px-4 py-3" aria-label="Preview" />
-              <th className="px-4 py-3">Filename</th>
+              <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Duration</th>
               <th className="px-4 py-3">Size</th>

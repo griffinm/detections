@@ -22,32 +22,13 @@ from api.schemas.detection import (
     DetectionUpdate,
     PromoteExample,
 )
+from api.services.audits import make_audit as _audit
 from api.services.crops import ensure_crop
 from api.services.events import publish
 from api.services.training_service import maybe_trigger_training
-from vd_db.models import Class, DetectionAudit, DetectionModel, Frame, Subclass, SubclassExample
+from vd_db.models import Class, DetectionModel, Frame, Subclass, SubclassExample
 
 router = APIRouter(prefix="/detections", tags=["detections"])
-
-
-def _audit(
-    detection: DetectionModel,
-    *,
-    reason: str,
-    from_class_id: uuid.UUID | None = None,
-    to_class_id: uuid.UUID | None = None,
-    from_subclass_id: uuid.UUID | None = None,
-    to_subclass_id: uuid.UUID | None = None,
-) -> DetectionAudit:
-    return DetectionAudit(
-        detection_id=detection.id,
-        reason=reason,
-        from_class_id=from_class_id,
-        to_class_id=to_class_id,
-        from_subclass_id=from_subclass_id,
-        to_subclass_id=to_subclass_id,
-        model_version_id=detection.model_version_id,
-    )
 
 
 async def _publish_frame_updated(db: AsyncSession, frame_id: uuid.UUID) -> None:

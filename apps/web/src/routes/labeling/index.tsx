@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { LabelingTabs } from "@/components/labeling/LabelingTabs";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { formatClipName } from "@/lib/format";
 import { useClasses } from "@/hooks/useClasses";
 import { useLabelingQueue } from "@/hooks/useLabelingQueue";
 import { useLabelingStore } from "@/stores/labeling";
@@ -26,7 +28,7 @@ export function LabelingQueue() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Labeling Queue"
+        title="Labeling"
         actions={
           <>
             <Select
@@ -55,6 +57,7 @@ export function LabelingQueue() {
           </>
         }
       />
+      <LabelingTabs current="queue" />
 
       {isPending ? (
         <div className="space-y-1.5">
@@ -88,7 +91,7 @@ export function LabelingQueue() {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">
-                  {item.clip_filename}
+                  {formatClipName(item.clip_created_at)}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   frame {item.frame_index}

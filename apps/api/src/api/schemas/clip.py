@@ -29,3 +29,12 @@ class ClipRead(BaseModel):
 
 class ClipDetail(ClipRead):
     frame_count: int
+
+
+class ClipClassSummary(BaseModel):
+    """How many detections of each class live on a clip — populates the
+    bulk-label page's class filter."""
+
+    class_id: uuid.UUID | None
+    class_name: str | None
+    count: int

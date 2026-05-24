@@ -179,6 +179,29 @@ archiver) can submit a video and be told who/what is in it.
 `POST /api/jobs`, and receives a webhook (or polls `GET /api/jobs/{id}`)
 carrying the detections + the who/what roll-up for that clip.
 
+## Post-Phase-8 — Bulk labeling (S)
+
+Goal: turn the per-frame, per-detection review flow into N decisions per
+click, without changing the existing single-detection path.
+
+- New endpoints in `routers/labeling.py`: `GET /predicted-groups`,
+  `GET /predicted-group-detections`, `POST /bulk-review`. New
+  `GET /clips/{id}/detections` + `GET /clips/{id}/class-summary` in
+  `routers/clips.py`. Shared audit-row builder lifted to
+  `services/audits.py` so bulk and per-detection writes produce
+  byte-identical ledger rows (spec 04 §Labeling).
+- New web routes `/labeling/groups` (predicted-subclass confirmation
+  queue) and `/labeling/clips/:id` (clip-scoped tile grid), plus a
+  `LabelingTabs` strip on the existing queue page and a `Bulk-label`
+  button on the clip-detail page (spec 08 §Bulk labeling).
+- Shared `<DetectionTileGrid>` with click / shift-click range / select-all
+  / clear multi-select, reusing the existing `/api/detections/{id}/crop`
+  cache.
+
+**Done when:** open `/labeling/groups`, expand a high-confidence group,
+hit Apply, and the `detection_audits` ledger gains one row per affected
+detection while the per-class metrics page reflects the new accuracy.
+
 ## Cross-cutting workstreams
 
 These run alongside the phases, not as discrete milestones:

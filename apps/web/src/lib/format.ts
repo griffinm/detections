@@ -15,6 +15,23 @@ export function formatDuration(sec: number | null): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** Display name for a clip — the source filename is often a GUID, so the
+ * UI surfaces the clip's timestamp instead. Format: `M/dd/yyyy h:mm:ss AM/PM`. */
+export function formatClipName(timestamp: string | Date | null | undefined): string {
+  if (!timestamp) return "—";
+  const d = typeof timestamp === "string" ? new Date(timestamp) : timestamp;
+  if (Number.isNaN(d.getTime())) return "—";
+  const month = d.getMonth() + 1;
+  const day = String(d.getDate()).padStart(2, "0");
+  const year = d.getFullYear();
+  let hours = d.getHours();
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  const seconds = String(d.getSeconds()).padStart(2, "0");
+  return `${month}/${day}/${year} ${hours}:${minutes}:${seconds} ${ampm}`;
+}
+
 /** Elapsed wall-clock time, e.g. "1h 04m", "7m 23s", "48s". */
 export function formatElapsed(sec: number | null): string {
   if (sec == null || sec < 0) return "—";

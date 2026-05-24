@@ -9,6 +9,7 @@ import { DetectionCrop } from "@/components/labeling/DetectionCrop";
 import { DetectionList } from "@/components/labeling/DetectionList";
 import { KeymapModal } from "@/components/labeling/KeymapModal";
 import { LabelingCanvas } from "@/components/labeling/LabelingCanvas";
+import { formatClipName } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useClasses } from "@/hooks/useClasses";
 import { useSubclasses } from "@/hooks/useSubclasses";
@@ -172,7 +173,7 @@ export function LabelingFrame() {
           <ChevronLeft className="h-4 w-4" /> Queue
         </button>
         <span className="min-w-0 max-w-[40vw] truncate text-sm font-medium">
-          {clip?.filename ?? "clip"}
+          {clip ? formatClipName(clip.created_at) : "clip"}
         </span>
         <span className="text-sm text-muted-foreground">
           frame {frame.frame_index}

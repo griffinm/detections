@@ -1,18 +1,47 @@
-"""The review queue — frames that still have unreviewed detections."""
+"""The review queue, plus bulk-labeling shortcuts.
+
+`GET /labeling/queue` is the per-frame backlog. `GET /labeling/predicted-groups`
+buckets auto-assigned detections by `(class, predicted_subclass, confidence)`
+so the user can confirm the model's kNN result for many crops at once.
+`POST /labeling/bulk-review` is the shared write path — it applies one set of
+field changes to many detections in a single transaction, inferring the audit
+reason per row exactly like the per-detection PATCH.
+"""
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
-from api.schemas.labeling import LabelingQueueItem
-from vd_db.models import Clip, DetectionModel, Frame
+from api.schemas.detection import DetectionGalleryItem
+from api.schemas.labeling import (
+    BulkReviewRequest,
+    BulkReviewResponse,
+    ConfidenceBucket,
+    LabelingQueueItem,
+    PredictedGroup,
+)
+from api.services.audits import make_audit
+from api.services.events import publish
+from api.services.gallery import query_gallery_items
+from api.services.training_service import maybe_trigger_training
+from vd_db import load_effective_settings
+from vd_db.models import Class, Clip, DetectionModel, Frame, Subclass
 
 router = APIRouter(prefix="/labeling", tags=["labeling"])
 
 _STRATEGIES = {"lowconf", "unreviewed"}
+
+# Bucket cutoffs for the predicted-groups view. The model never sets
+# `predicted_subclass_id` below `subclass_min_confidence` (kNN gate in
+# `vd.assign_subclass`), so the "low" bucket is bounded from below by that.
+_BUCKET_HIGH = 0.85
+_BUCKET_MED = 0.70
+
+_SAMPLE_LIMIT = 9
 
 
 @router.get("/queue", response_model=list[LabelingQueueItem])
@@ -35,13 +64,21 @@ async def get_queue(
             Frame.frame_index,
             Frame.path,
             Clip.filename,
+            Clip.created_at,
             unreviewed.label("unreviewed"),
             min_conf.label("min_conf"),
         )
         .join(DetectionModel, DetectionModel.frame_id == Frame.id)
         .join(Clip, Clip.id == Frame.clip_id)
         .where(DetectionModel.deleted_at.is_(None), Frame.kept.is_(True))
-        .group_by(Frame.id, Frame.clip_id, Frame.frame_index, Frame.path, Clip.filename)
+        .group_by(
+            Frame.id,
+            Frame.clip_id,
+            Frame.frame_index,
+            Frame.path,
+            Clip.filename,
+            Clip.created_at,
+        )
         .having(unreviewed > 0)
     )
     if class_id is not None:
@@ -60,6 +97,7 @@ async def get_queue(
             frame_id=row.id,
             clip_id=row.clip_id,
             clip_filename=row.filename,
+            clip_created_at=row.created_at,
             frame_index=row.frame_index,
             image_url=f"/files/frames/{row.path}" if row.path else None,
             unreviewed_count=row.unreviewed,
@@ -67,3 +105,233 @@ async def get_queue(
         )
         for row in rows
     ]
+
+
+@router.get("/predicted-groups", response_model=list[PredictedGroup])
+async def get_predicted_groups(
+    class_id: uuid.UUID | None = Query(default=None),
+    min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
+    db: AsyncSession = Depends(get_db),
+) -> list[PredictedGroup]:
+    """Group still-unreviewed detections by their model-assigned sub-class.
+
+    A row appears here only when `vd.assign_subclass` made a prediction the
+    user hasn't acted on yet. Default `min_confidence` follows the global
+    `subclass_min_confidence` setting — the same gate the worker uses — so
+    the surface matches what the kNN actually committed.
+    """
+    if min_confidence is None:
+        min_confidence = (await load_effective_settings(db)).subclass_min_confidence
+
+    bucket = case(
+        (DetectionModel.confidence_subclass >= _BUCKET_HIGH, "high"),
+        (DetectionModel.confidence_subclass >= _BUCKET_MED, "med"),
+        else_="low",
+    ).label("bucket")
+
+    bucket_rank = case(
+        (DetectionModel.confidence_subclass >= _BUCKET_HIGH, 2),
+        (DetectionModel.confidence_subclass >= _BUCKET_MED, 1),
+        else_=0,
+    )
+
+    query = (
+        select(
+            DetectionModel.class_id,
+            Class.name.label("class_name"),
+            DetectionModel.predicted_subclass_id,
+            Subclass.name.label("subclass_name"),
+            bucket,
+            func.count().label("n"),
+            func.max(bucket_rank).label("rank"),
+            func.array_agg(
+                DetectionModel.id,
+            ).label("ids"),
+        )
+        .select_from(DetectionModel)
+        .join(Frame, Frame.id == DetectionModel.frame_id)
+        .join(Subclass, Subclass.id == DetectionModel.predicted_subclass_id)
+        .outerjoin(Class, Class.id == DetectionModel.class_id)
+        .where(
+            DetectionModel.reviewed.is_(False),
+            DetectionModel.deleted_at.is_(None),
+            Frame.kept.is_(True),
+            DetectionModel.predicted_subclass_id.is_not(None),
+            DetectionModel.confidence_subclass >= min_confidence,
+        )
+        .group_by(
+            DetectionModel.class_id,
+            Class.name,
+            DetectionModel.predicted_subclass_id,
+            Subclass.name,
+            bucket,
+        )
+        .order_by(func.max(bucket_rank).desc(), func.count().desc())
+    )
+    if class_id is not None:
+        query = query.where(DetectionModel.class_id == class_id)
+
+    rows = (await db.execute(query)).all()
+    return [
+        PredictedGroup(
+            class_id=row.class_id,
+            class_name=row.class_name,
+            predicted_subclass_id=row.predicted_subclass_id,
+            predicted_subclass_name=row.subclass_name,
+            confidence_bucket=row.bucket,
+            count=row.n,
+            sample_detection_ids=list(row.ids)[:_SAMPLE_LIMIT],
+        )
+        for row in rows
+    ]
+
+
+@router.get("/predicted-group-detections", response_model=list[DetectionGalleryItem])
+async def get_predicted_group_detections(
+    predicted_subclass_id: uuid.UUID,
+    bucket: ConfidenceBucket | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+) -> list[DetectionGalleryItem]:
+    """Full detection list for one (predicted_subclass, bucket) cell.
+
+    `GET /labeling/predicted-groups` is the bucketed index; this is the
+    drill-down the bulk-confirm UI renders as a tile grid.
+    """
+    where = DetectionModel.predicted_subclass_id == predicted_subclass_id
+    if bucket == "high":
+        where = where & (DetectionModel.confidence_subclass >= _BUCKET_HIGH)
+    elif bucket == "med":
+        where = where & (
+            DetectionModel.confidence_subclass >= _BUCKET_MED
+        ) & (DetectionModel.confidence_subclass < _BUCKET_HIGH)
+    elif bucket == "low":
+        where = where & (DetectionModel.confidence_subclass < _BUCKET_MED)
+
+    return await query_gallery_items(
+        db, where=where, include="auto", sort="created_desc", limit=limit
+    )
+
+
+@router.post("/bulk-review", response_model=BulkReviewResponse)
+async def bulk_review(
+    payload: BulkReviewRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BulkReviewResponse:
+    """Apply class/subclass/review changes to many detections in one shot.
+
+    Unified-apply semantics: pass any subset of `{class_id, subclass_id,
+    reviewed}` — each row's audit reason is inferred from what actually
+    changes on that row (mirrors the per-detection PATCH inference). Skips
+    soft-deleted rows and rows where the selected sub-class would belong to a
+    different class than the detection (caller can include `class_id` in the
+    same call to override). Idempotent: a re-apply with the same values
+    writes zero audits.
+    """
+    data = payload.model_dump(exclude_unset=True)
+    has_class = "class_id" in data
+    has_subclass = "subclass_id" in data
+    has_reviewed = "reviewed" in data
+
+    target_subclass: Subclass | None = None
+    if has_subclass and data["subclass_id"] is not None:
+        target_subclass = await db.get(Subclass, data["subclass_id"])
+        if target_subclass is None:
+            raise HTTPException(status_code=404, detail="Sub-class not found")
+        if has_class and data["class_id"] not in (None, target_subclass.class_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Sub-class belongs to a different class than class_id",
+            )
+
+    detections = list(
+        await db.scalars(
+            select(DetectionModel).where(
+                DetectionModel.id.in_(payload.detection_ids),
+                DetectionModel.deleted_at.is_(None),
+            )
+        )
+    )
+
+    now = datetime.now(UTC)
+    updated = 0
+    audits_written = 0
+    affected_class_ids: set[uuid.UUID | None] = set()
+    affected_frame_ids: set[uuid.UUID] = set()
+
+    for det in detections:
+        # If the caller is only changing the subclass but the detection's
+        # class doesn't match the subclass's class, the row would become
+        # internally inconsistent — skip it rather than write garbage.
+        if (
+            target_subclass is not None
+            and not has_class
+            and det.class_id != target_subclass.class_id
+        ):
+            continue
+
+        class_changed = has_class and data["class_id"] != det.class_id
+        subclass_changed = has_subclass and data["subclass_id"] != det.subclass_id
+        row_changed = False
+
+        if class_changed or subclass_changed:
+            db.add(
+                make_audit(
+                    det,
+                    reason="user_reassign",
+                    from_class_id=det.class_id,
+                    to_class_id=data["class_id"] if class_changed else det.class_id,
+                    from_subclass_id=det.subclass_id,
+                    to_subclass_id=data["subclass_id"]
+                    if subclass_changed
+                    else det.subclass_id,
+                )
+            )
+            audits_written += 1
+            if class_changed:
+                det.class_id = data["class_id"]
+            if subclass_changed:
+                det.subclass_id = data["subclass_id"]
+            row_changed = True
+
+        if has_reviewed:
+            if data["reviewed"] and not det.reviewed:
+                det.reviewed = True
+                det.reviewed_at = now
+                db.add(
+                    make_audit(det, reason="user_review", to_class_id=det.class_id)
+                )
+                audits_written += 1
+                row_changed = True
+            elif data["reviewed"] is False and det.reviewed:
+                det.reviewed = False
+                det.reviewed_at = None
+                row_changed = True
+
+        if row_changed:
+            updated += 1
+            affected_class_ids.add(det.class_id)
+            affected_frame_ids.add(det.frame_id)
+
+    await db.commit()
+
+    if affected_frame_ids:
+        # One SSE per affected frame so any open `/labeling/:fid` view refreshes.
+        clip_rows = await db.execute(
+            select(Frame.id, Frame.clip_id).where(
+                Frame.id.in_(affected_frame_ids)
+            )
+        )
+        for frame_id, clip_id in clip_rows:
+            await publish(
+                "frame.updated", clip_id=str(clip_id), frame_id=str(frame_id)
+            )
+    if affected_class_ids:
+        await maybe_trigger_training(db, affected_class_ids)
+
+    return BulkReviewResponse(
+        updated=updated,
+        skipped=len(payload.detection_ids) - updated,
+        audits_written=audits_written,
+        affected_frame_ids=list(affected_frame_ids),
+    )

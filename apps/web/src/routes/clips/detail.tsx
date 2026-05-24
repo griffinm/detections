@@ -1,9 +1,9 @@
 import { type ReactNode, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { CheckCircle2, RefreshCw } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
   Dialog,
@@ -15,11 +15,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { DeleteFrameButton } from "@/components/DeleteFrameButton";
-import { formatBytes, formatDuration } from "@/lib/format";
+import { formatBytes, formatClipName, formatDuration } from "@/lib/format";
 import { useDeleteClip, useReextractClip } from "@/hooks/useClips";
 import { useClip, useClipFrames, type Frame } from "@/hooks/useFrames";
 
-function ReextractButton({ id, filename }: { id: string; filename: string }) {
+function ReextractButton({ id, name }: { id: string; name: string }) {
   const reextract = useReextractClip();
   const [open, setOpen] = useState(false);
   return (
@@ -33,7 +33,7 @@ function ReextractButton({ id, filename }: { id: string; filename: string }) {
         <DialogHeader>
           <DialogTitle>Re-extract frames?</DialogTitle>
           <DialogDescription>
-            All existing frames and detections for “{filename}” will be
+            All existing frames and detections for “{name}” will be
             deleted, then frames will be re-extracted from the source video
             and detection will run again. Any examples promoted from this
             clip will also be lost. The source video itself is untouched.
@@ -68,7 +68,7 @@ function ReextractButton({ id, filename }: { id: string; filename: string }) {
   );
 }
 
-function DeleteClipButton({ id, filename }: { id: string; filename: string }) {
+function DeleteClipButton({ id, name }: { id: string; name: string }) {
   const navigate = useNavigate();
   const del = useDeleteClip();
   const [open, setOpen] = useState(false);
@@ -83,7 +83,7 @@ function DeleteClipButton({ id, filename }: { id: string; filename: string }) {
         <DialogHeader>
           <DialogTitle>Delete clip?</DialogTitle>
           <DialogDescription>
-            “{filename}” and all of its frames and detections will be
+            “{name}” and all of its frames and detections will be
             permanently removed. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
@@ -205,15 +205,21 @@ export function ClipDetail() {
           clipPending ? (
             <span className="inline-block h-6 w-48 animate-pulse rounded bg-muted align-middle" />
           ) : (
-            <span className="break-all">{clip?.filename}</span>
+            <span className="break-all">{formatClipName(clip?.created_at)}</span>
           )
         }
         meta={clip && <StatusBadge status={clip.status} />}
         actions={
           clip && (
             <>
-              <ReextractButton id={clip.id} filename={clip.filename} />
-              <DeleteClipButton id={clip.id} filename={clip.filename} />
+              <Link
+                to={`/labeling/clips/${clip.id}`}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                <CheckCircle2 className="h-4 w-4" /> Bulk-label
+              </Link>
+              <ReextractButton id={clip.id} name={formatClipName(clip.created_at)} />
+              <DeleteClipButton id={clip.id} name={formatClipName(clip.created_at)} />
             </>
           )
         }

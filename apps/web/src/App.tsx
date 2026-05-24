@@ -8,6 +8,8 @@ import { ClipDetail } from "./routes/clips/detail";
 import { FrameDetailPage } from "./routes/clips/frame";
 import { LabelingQueue } from "./routes/labeling/index";
 import { LabelingFrame } from "./routes/labeling/frame";
+import { LabelingGroups } from "./routes/labeling/groups";
+import { LabelingClip } from "./routes/labeling/clip";
 import { ClassesList } from "./routes/classes/index";
 import { ClassDetail } from "./routes/classes/detail";
 import { ModelsPage } from "./routes/models";
@@ -33,6 +35,8 @@ export default function App() {
           <Route path="/clips/:id" element={<ClipDetail />} />
           <Route path="/clips/:id/frames/:frameId" element={<FrameDetailPage />} />
           <Route path="/labeling" element={<LabelingQueue />} />
+          <Route path="/labeling/groups" element={<LabelingGroups />} />
+          <Route path="/labeling/clips/:id" element={<LabelingClip />} />
           <Route path="/labeling/:fid" element={<LabelingFrame />} />
           <Route path="/classes" element={<ClassesList />} />
           <Route path="/classes/:id" element={<ClassDetail />} />

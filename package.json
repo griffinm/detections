@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
+    "deploy": "bash ./tools/scripts/deploy.sh",
     "prepare": "pre-commit install || true",
     "dev": "./tools/scripts/dev.sh",
     "gpu": "docker compose -f docker/docker-compose.yml up --build worker-gpu"

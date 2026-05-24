@@ -1,13 +1,13 @@
-"""Shared query for the class / sub-class detection gallery.
+"""Shared query for the class / sub-class / clip detection gallery.
 
-Used by both `/api/subclasses/{id}/detections` and
-`/api/classes/{id}/detections`. The variable bit is the WHERE clause; the
-join + sort + soft-delete filter + result projection are identical.
+Used by the class, sub-class, and clip detection endpoints. The variable bit
+is the WHERE clause and the sort key; the join + soft-delete filter + result
+projection are identical.
 """
 
 from typing import Literal
 
-from sqlalchemy import ColumnElement, desc, select
+from sqlalchemy import ColumnElement, asc, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.schemas.detection import Bbox, DetectionGalleryItem
@@ -15,7 +15,7 @@ from api.services.crops import crop_url
 from vd_db.models import DetectionModel, Frame
 
 GalleryInclude = Literal["all", "auto", "reviewed"]
-GallerySort = Literal["created_desc", "reviewed_desc"]
+GallerySort = Literal["created_desc", "reviewed_desc", "frame_asc"]
 
 
 async def query_gallery_items(
@@ -27,7 +27,7 @@ async def query_gallery_items(
     limit: int,
 ) -> list[DetectionGalleryItem]:
     query = (
-        select(DetectionModel, Frame.path, Frame.clip_id)
+        select(DetectionModel, Frame.path, Frame.clip_id, Frame.frame_index)
         .join(Frame, Frame.id == DetectionModel.frame_id)
         .where(where)
         .where(DetectionModel.deleted_at.is_(None))
@@ -43,6 +43,10 @@ async def query_gallery_items(
             desc(DetectionModel.reviewed_at).nulls_last(),
             desc(DetectionModel.created_at),
         )
+    elif sort == "frame_asc":
+        # Clip view: read the clip left-to-right by frame, then stable on
+        # creation order so multiple detections per frame have a fixed order.
+        query = query.order_by(asc(Frame.frame_index), asc(DetectionModel.created_at))
     else:
         query = query.order_by(desc(DetectionModel.created_at))
 
@@ -62,5 +66,5 @@ async def query_gallery_items(
             reviewed_at=det.reviewed_at,
             created_at=det.created_at,
         )
-        for det, frame_path, clip_id in rows
+        for det, frame_path, clip_id, _ in rows
     ]

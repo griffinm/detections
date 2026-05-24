@@ -4,6 +4,7 @@ export interface QueueItem {
   frame_id: string;
   clip_id: string;
   clip_filename: string;
+  clip_created_at: string;
   frame_index: number;
   image_url: string | null;
   unreviewed_count: number;

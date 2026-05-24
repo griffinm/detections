@@ -172,6 +172,80 @@ params on `/api/labeling/queue`, exposed as two selectors on `/labeling`):
 Deferred: **Recent corrections** — frames near recently corrected ones, as a
 kNN over the corrected detection's embedding (`specs/deferred.md`).
 
+## Bulk labeling
+
+The per-frame queue handles "one decision at a time". Two additional sub-pages
+turn many decisions into one, sharing the same `<DetectionTileGrid>` +
+`<DetectionPreview>` pair and the backend `POST /api/labeling/bulk-review`
+write path. A `<LabelingTabs>` strip under the page header switches between
+**Frame queue** (default `/labeling`), **Predicted groups**, and **By clip**
+(lands on the clip list, where each clip detail page now has a `Bulk-label`
+button).
+
+### Tile grid + preview interaction
+
+Tile thumbnails are small (96 px) so the user can scan many at once, which
+means click semantics are split:
+
+- **Click the tile body** → focuses the tile (moves the side preview panel
+  to it); does **not** change selection.
+- **Click the corner checkbox** → explicit selection toggle.
+- **Shift-click the tile body** → range-selects from the last-focused tile.
+- **Select all / Clear** buttons cover the bulk cases.
+
+The right-rail `<DetectionPreview>` shows the focused detection at three
+useful levels: a large cached crop (`/api/detections/{id}/crop?size=512`),
+the whole frame JPEG with the bbox drawn over it as an `inset`-positioned
+div using normalized coords, and a deep-link to `/labeling/:frame_id` if
+the user needs to fix the box itself.
+
+### Predicted groups (`/labeling/groups`)
+
+Renders `GET /api/labeling/predicted-groups` as a grid of cards keyed by
+`(predicted_subclass, confidence_bucket)`. Each card shows: subclass name,
+parent class, count, a bucket pill (`high ≥0.85 / med ≥0.7 / low ≥
+subclass_min_confidence`), and a 9-thumb preview strip drawn from the
+group's `sample_detection_ids`. Selecting a card fetches the full group via
+`GET /api/labeling/predicted-group-detections`, lays the tiles out in a
+multi-select grid, defaults every tile to selected, and exposes a Select
+that defaults to the predicted sub-class but can be overridden to a sibling
+sub-class. **Apply** sends one `POST /api/labeling/bulk-review` with
+`subclass_id` and `reviewed=true`.
+
+### Clip-scoped (`/labeling/clips/:clip_id`)
+
+The "same subject across 30 frames" view. Class filter defaults to the most-
+common class in the clip via `GET /api/clips/{id}/class-summary`. The tile
+grid is `GET /api/clips/{id}/detections?class_id=...&include=auto|reviewed|all`
+ordered by `frame_index` so the clip reads left-to-right. Multi-select supports
+click, shift-click range, and Select all / Clear; the Apply target is the
+sub-class chosen from a Select. Same bulk endpoint as above.
+
+### Unified-apply semantics
+
+`POST /api/labeling/bulk-review` accepts any subset of `{class_id,
+subclass_id, reviewed}` and applies it to every detection in
+`detection_ids`. Per row the audit reason is inferred exactly like the
+per-detection PATCH — `user_reassign` when class or subclass changes,
+`user_review` when reviewed flips false→true. Soft-deleted rows and rows
+where the chosen sub-class would belong to a different class (without an
+overriding `class_id` in the same call) are silently skipped and surfaced
+in the response as `skipped`. The mutation invalidates the affected
+TanStack Query caches (`predicted-groups`, `clip-detections`,
+`labeling-queue`, the class/sub-class galleries, and any open `frames/:id`
+queries via the response's `affected_frame_ids`); SSE handles open frame
+views in real time.
+
+### Out of scope (deferred)
+
+- **Undo for bulk apply.** The per-detection undo ring buffer is local to a
+  frame; a bulk action can touch hundreds of detections across many frames.
+  Re-running bulk with the previous state is the workaround until a
+  general bulk-undo is justified.
+- **kNN "find similar" sidebar inside the per-frame view**, embedding cluster
+  discovery, pseudo-tracks via IoU, auto-propagation on a single label.
+  Tracked alongside the existing `recent corrections` queue strategy.
+
 ## Class / sub-class detail page
 
 Reached from `/classes/:id`. Left rail is the sub-class picker, with an

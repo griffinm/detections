@@ -288,7 +288,7 @@ same-host LAN.
   the class's active sub-classes (newest first). Powers the class-level
   "Examples" tab; sub-class `color_hex` keys the per-tile border in the UI.
 
-### Labeling queue
+### Labeling queue + bulk shortcuts
 - `GET /labeling/queue?strategy=&class_id=&limit=` — ordered list of frames
   with unreviewed detections. `strategy` ∈ `lowconf` (lowest unreviewed
   `confidence_class` first) | `unreviewed` (newest frame first). The optional
@@ -296,6 +296,39 @@ same-host LAN.
   scopes the per-frame counts to it. The kNN `recent corrections` strategy is
   deferred (`specs/deferred.md`). The UI holds the returned ordering for
   keyboard (`J`/`K`) navigation.
+- `GET /labeling/predicted-groups?class_id=&min_confidence=` — group
+  unreviewed detections by `(class, predicted_subclass, confidence_bucket)`
+  where the bucket is `high ≥0.85 / med ≥0.7 / low ≥ min_confidence`.
+  `min_confidence` defaults to the effective `subclass_min_confidence`
+  setting (the same gate the worker uses), so the surface matches what kNN
+  actually committed. Returns `{class_id, class_name, predicted_subclass_id,
+  predicted_subclass_name, confidence_bucket, count, sample_detection_ids}`
+  ordered by bucket desc, count desc — the bulk page renders each row as a
+  card with up to 9 thumb previews.
+- `GET /labeling/predicted-group-detections?predicted_subclass_id=&bucket=&limit=`
+  — full `DetectionGalleryItem[]` for one (subclass, bucket) cell, ready to
+  paint into the bulk tile grid.
+- `POST /labeling/bulk-review` — body `{detection_ids:[uuid], class_id?,
+  subclass_id?, reviewed?}`. Applies the same set of field changes to many
+  detections in one transaction; the audit reason is inferred per row
+  exactly like the per-detection PATCH (`user_reassign` when class/subclass
+  changes, `user_review` when reviewed flips false→true). Skips
+  soft-deleted rows and rows whose `class_id` would clash with the chosen
+  `subclass_id` (unless `class_id` is provided to override). Idempotent — a
+  no-op re-apply writes zero audits. Returns
+  `{updated, skipped, audits_written, affected_frame_ids}`; publishes one
+  `frame.updated` SSE per affected frame and best-effort triggers training.
+
+### Clip-scoped detections
+- `GET /clips/{id}/detections?class_id=&subclass_id=&include=&limit=` — every
+  non-deleted detection in this clip, ordered by `frame_index` then
+  `created_at` so a clip reads left-to-right. Returns the
+  `DetectionGalleryItem[]` shape. Powers the "bulk-label this clip" tile
+  grid, where the user multi-selects and applies a sub-class via
+  `POST /labeling/bulk-review`.
+- `GET /clips/{id}/class-summary` — `[{class_id, class_name, count}]`
+  ordered most-common-first, so the bulk-label page can default the class
+  filter to the dominant subject in the clip.
 
 ### Models + training
 - `GET /models?kind=` — list versions.

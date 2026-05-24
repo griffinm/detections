@@ -4,9 +4,10 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 from api.routers import clips
-from vd_db.models import Clip
+from vd_db.models import Class, Clip, DetectionModel, Frame
 
 
 async def _seed_clip(session) -> Clip:  # type: ignore[no-untyped-def]
@@ -138,3 +139,66 @@ async def test_upload_suffixes_on_name_collision(client, inbox):  # type: ignore
     assert second.json()["filename"] == "clip-1.mp4"
     assert (inbox / "clip.mp4").read_bytes() == b"one"
     assert (inbox / "clip-1.mp4").read_bytes() == b"two"
+
+
+async def _seed_clip_with_detections(session, frame_count=3):  # type: ignore[no-untyped-def]
+    person = await session.scalar(select(Class.id).where(Class.name == "person"))
+    car = await session.scalar(select(Class.id).where(Class.name == "car"))
+    clip = Clip(
+        filename="t.mp4", original_path="/in/t.mp4",
+        sha256=uuid.uuid4().hex, size_bytes=1, status="done",
+    )
+    session.add(clip)
+    await session.flush()
+    dets: list[DetectionModel] = []
+    for i in range(frame_count):
+        frame = Frame(
+            clip_id=clip.id, frame_index=i, timestamp_sec=float(i),
+            path=f"{clip.id}/frame_{i:06d}.jpg", width=640, height=480,
+            kept=True, detect_status="done",
+        )
+        session.add(frame)
+        await session.flush()
+        # Two person + one car so summary ordering is meaningful.
+        cls = person if i < 2 else car
+        det = DetectionModel(
+            frame_id=frame.id, class_id=cls, predicted_class_id=cls,
+            bbox={"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}, source="model",
+            confidence_class=0.5,
+        )
+        session.add(det)
+        dets.append(det)
+    await session.commit()
+    return clip, dets, person, car
+
+
+async def test_clip_detections_orders_by_frame_index(client, session):  # type: ignore[no-untyped-def]
+    clip, dets, _, _ = await _seed_clip_with_detections(session, frame_count=3)
+    resp = await client.get(f"/api/clips/{clip.id}/detections")
+    assert resp.status_code == 200
+    items = resp.json()
+    assert [i["id"] for i in items] == [str(d.id) for d in dets]
+
+
+async def test_clip_detections_filtered_by_class(client, session):  # type: ignore[no-untyped-def]
+    clip, dets, person, _ = await _seed_clip_with_detections(session, frame_count=3)
+    resp = await client.get(f"/api/clips/{clip.id}/detections?class_id={person}")
+    items = resp.json()
+    # First two are person, third is car
+    assert [i["id"] for i in items] == [str(dets[0].id), str(dets[1].id)]
+
+
+async def test_clip_class_summary(client, session):  # type: ignore[no-untyped-def]
+    clip, _, person, car = await _seed_clip_with_detections(session, frame_count=3)
+    resp = await client.get(f"/api/clips/{clip.id}/class-summary")
+    rows = resp.json()
+    by_id = {r["class_id"]: r for r in rows}
+    assert by_id[str(person)]["count"] == 2
+    assert by_id[str(car)]["count"] == 1
+    # most-common-first ordering powers the page's default filter pick
+    assert rows[0]["class_id"] == str(person)
+
+
+async def test_clip_detections_404_for_missing_clip(client):  # type: ignore[no-untyped-def]
+    resp = await client.get(f"/api/clips/{uuid.uuid4()}/detections")
+    assert resp.status_code == 404

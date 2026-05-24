@@ -3,15 +3,17 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import enqueue, get_db, settings
-from api.schemas.clip import ClipDetail, ClipRead
+from api.schemas.clip import ClipClassSummary, ClipDetail, ClipRead
 from api.schemas.common import Paginated
+from api.schemas.detection import DetectionGalleryItem
 from api.schemas.frame import FrameRead
-from vd_db.models import Clip, Frame
+from api.services.gallery import GalleryInclude, query_gallery_items
+from vd_db.models import Class, Clip, DetectionModel, Frame
 
 router = APIRouter(prefix="/clips", tags=["clips"])
 
@@ -189,4 +191,68 @@ async def list_frames(
             update={"image_url": f"/files/frames/{f.path}" if f.path else None}
         )
         for f in rows
+    ]
+
+
+@router.get("/{clip_id}/detections", response_model=list[DetectionGalleryItem])
+async def list_clip_detections(
+    clip_id: uuid.UUID,
+    class_id: uuid.UUID | None = Query(default=None),
+    subclass_id: uuid.UUID | None = Query(default=None),
+    include: GalleryInclude = Query(default="all"),
+    limit: int = Query(default=500, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+) -> list[DetectionGalleryItem]:
+    """Every non-deleted detection on this clip, ordered by frame index.
+
+    Powers the bulk-label-by-clip view. The class filter is the main lever —
+    a clip is normally many frames of one subject, so 'all person crops in
+    this clip' is the natural unit to bulk-confirm.
+    """
+    clip = await db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    conditions: list[object] = [Frame.clip_id == clip_id]
+    if class_id is not None:
+        conditions.append(DetectionModel.class_id == class_id)
+    if subclass_id is not None:
+        conditions.append(DetectionModel.subclass_id == subclass_id)
+
+    return await query_gallery_items(
+        db,
+        where=and_(*conditions),
+        include=include,
+        sort="frame_asc",
+        limit=limit,
+    )
+
+
+@router.get("/{clip_id}/class-summary", response_model=list[ClipClassSummary])
+async def get_clip_class_summary(
+    clip_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[ClipClassSummary]:
+    """Per-class detection counts for this clip — the bulk-label page picks
+    the most-common class as the default filter."""
+    clip = await db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    rows = await db.execute(
+        select(
+            DetectionModel.class_id,
+            Class.name.label("class_name"),
+            func.count().label("n"),
+        )
+        .select_from(DetectionModel)
+        .join(Frame, Frame.id == DetectionModel.frame_id)
+        .outerjoin(Class, Class.id == DetectionModel.class_id)
+        .where(Frame.clip_id == clip_id, DetectionModel.deleted_at.is_(None))
+        .group_by(DetectionModel.class_id, Class.name)
+        .order_by(func.count().desc())
+    )
+    return [
+        ClipClassSummary(class_id=cid, class_name=name, count=n)
+        for cid, name, n in rows
     ]

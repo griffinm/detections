@@ -102,8 +102,8 @@ Take majority vote among the top 5; tie-break by mean cosine sim.
    ↓
 [worker] runs ultralytics training. Records mAP/precision/recall.
    ↓
-[worker] writes model_versions row, activates if validation mAP ≥
-         previous active mAP - 1pp (regression guard).
+[worker] writes model_versions row, activates only if it clears the
+         aggregate + per-class regression guard (see below).
    ↓
 [broadcast] new model available; UI shows banner + offers backfill.
 ```
@@ -112,10 +112,22 @@ Catastrophic forgetting guard:
 - Always train from the previous active checkpoint, not from COCO-pretrained.
 - The dataset includes every reviewed/user detection across all classes, so
   existing classes stay represented (no per-class oversampling yet).
-- Regression guard (implemented): a new model is activated only if its
-  aggregate val mAP50-95 ≥ the previous active model's − 0.01; otherwise the
-  `model_versions` row is registered but left inactive. A *per-class* mAP
-  regression check is a future enhancement.
+- Regression guard: a new model activates only if **both** checks pass:
+  - **Aggregate**: val mAP50-95 ≥ previous active − `yolo_regression_tolerance`
+    (default 0.01).
+  - **Per-class**: for every class with ≥ `yolo_per_class_min_val_samples`
+    val labels in both the previous and new model (default 10), the new
+    per-class mAP50-95 ≥ previous − `yolo_per_class_regression_tolerance`
+    (default 0.05 — looser than aggregate because per-class AP is noisier
+    on small val splits). Classes below the val-sample threshold, or absent
+    from one of the models, are *skipped* (not gated) and the reason is
+    recorded so the models page can show why.
+
+  The breakdown — aggregate diff, per-class status list, blocked classes —
+  is stored on both `model_versions.metrics.regression_check` and
+  `training_runs.metrics.regression_check` and rendered on `/models`.
+  A blocked model is registered but left inactive; the owner can still
+  activate it manually from `/models`.
 
 Dataset layout (Ultralytics standard):
 ```

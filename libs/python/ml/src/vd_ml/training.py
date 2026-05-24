@@ -20,6 +20,10 @@ class YoloTrainResult(NamedTuple):
     precision: float
     recall: float
     epochs: int
+    # Per-class validation metrics keyed by class name. Empty if Ultralytics did
+    # not surface them (e.g. a val split with zero labels for every class).
+    per_class_map50_95: dict[str, float]
+    per_class_map50: dict[str, float]
 
 
 def train_yolo(
@@ -78,4 +82,29 @@ def train_yolo(
         precision=summary.get("metrics/precision(B)", 0.0),
         recall=summary.get("metrics/recall(B)", 0.0),
         epochs=epochs,
+        per_class_map50_95=_per_class(results, "maps"),
+        per_class_map50=_per_class(results, "ap50"),
     )
+
+
+def _per_class(results: Any, attr: str) -> dict[str, float]:
+    """Pluck a per-class metric array off the Ultralytics result.
+
+    Ultralytics exposes per-class metrics on `results.box` as a numpy array
+    indexed by class id, paired with `results.names: dict[int, str]`. Both
+    pieces are best-effort: if the model only saw one class or the val split
+    starved one out, the array can be empty or the class can be missing — so
+    we silently return what we can map.
+    """
+    box = getattr(results, "box", None)
+    arr = getattr(box, attr, None)
+    names = getattr(results, "names", None) or {}
+    if arr is None or not names:
+        return {}
+    out: dict[str, float] = {}
+    for idx, name in names.items():
+        try:
+            out[str(name)] = float(arr[int(idx)])
+        except (IndexError, TypeError, ValueError):
+            continue
+    return out

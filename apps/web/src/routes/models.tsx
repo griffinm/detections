@@ -1,7 +1,33 @@
+import { Fragment, useState } from "react";
 import { toast } from "sonner";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { useActivateModel, useModels, type ModelVersion } from "@/hooks/useModels";
+
+interface PerClassEntry {
+  class: string;
+  prev: number | null;
+  new: number | null;
+  prev_val_samples: number;
+  new_val_samples: number;
+  status: "pass" | "fail" | "skipped";
+  reason?: string;
+}
+
+interface RegressionCheck {
+  aggregate: {
+    prev: number | null;
+    new: number;
+    tolerance: number;
+    pass: boolean;
+  };
+  per_class: PerClassEntry[];
+  per_class_tolerance: number;
+  min_val_samples: number;
+  blocked_classes: string[];
+  activate: boolean;
+}
 
 /** A one-line headline metric for the table — mAP for YOLO, accuracy for a classifier. */
 function metricSummary(model: ModelVersion): string {
@@ -17,9 +43,165 @@ function metricSummary(model: ModelVersion): string {
   return typeof metrics.source === "string" ? metrics.source : "—";
 }
 
+function fmt(v: number | null | undefined): string {
+  return typeof v === "number" ? v.toFixed(3) : "—";
+}
+
+function statusPill(status: PerClassEntry["status"]): string {
+  if (status === "pass") return "text-green-600";
+  if (status === "fail") return "text-destructive";
+  return "text-muted-foreground";
+}
+
+function RegressionPanel({ check }: { check: RegressionCheck }) {
+  const agg = check.aggregate;
+  const aggDelta =
+    typeof agg.prev === "number" ? agg.new - agg.prev : null;
+  return (
+    <div className="space-y-3 px-4 py-3 text-sm">
+      <div>
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+          Activation guard
+        </div>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span className={check.activate ? "text-green-600" : "text-destructive"}>
+            {check.activate ? "Activated" : "Blocked"}
+          </span>
+          {!check.activate && check.blocked_classes.length > 0 && (
+            <span className="text-xs text-muted-foreground">
+              blocked by: {check.blocked_classes.join(", ")}
+            </span>
+          )}
+          {!check.activate && !agg.pass && (
+            <span className="text-xs text-muted-foreground">
+              blocked by aggregate mAP regression
+            </span>
+          )}
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground tabular-nums">
+          aggregate mAP50-95: {fmt(agg.prev)} → {fmt(agg.new)}
+          {aggDelta !== null && (
+            <span className={aggDelta < 0 ? "text-destructive" : "text-green-600"}>
+              {" "}({aggDelta >= 0 ? "+" : ""}{aggDelta.toFixed(3)})
+            </span>
+          )}
+          {" "}· tolerance {agg.tolerance.toFixed(3)}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+          Per-class (tolerance {check.per_class_tolerance.toFixed(3)},
+          min {check.min_val_samples} val samples)
+        </div>
+        <table className="mt-2 w-full text-xs tabular-nums">
+          <thead className="text-left text-muted-foreground">
+            <tr>
+              <th className="py-1 pr-3 font-medium">Class</th>
+              <th className="py-1 pr-3 font-medium">Prev mAP</th>
+              <th className="py-1 pr-3 font-medium">New mAP</th>
+              <th className="py-1 pr-3 font-medium">Δ</th>
+              <th className="py-1 pr-3 font-medium">Val samples</th>
+              <th className="py-1 font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {check.per_class.map((e) => {
+              const delta =
+                typeof e.prev === "number" && typeof e.new === "number"
+                  ? e.new - e.prev
+                  : null;
+              return (
+                <tr key={e.class} className="border-t border-border/50">
+                  <td className="py-1 pr-3">{e.class}</td>
+                  <td className="py-1 pr-3">{fmt(e.prev)}</td>
+                  <td className="py-1 pr-3">{fmt(e.new)}</td>
+                  <td
+                    className={`py-1 pr-3 ${
+                      delta !== null && delta < 0
+                        ? "text-destructive"
+                        : delta !== null && delta > 0
+                          ? "text-green-600"
+                          : ""
+                    }`}
+                  >
+                    {delta !== null
+                      ? `${delta >= 0 ? "+" : ""}${delta.toFixed(3)}`
+                      : "—"}
+                  </td>
+                  <td className="py-1 pr-3 text-muted-foreground">
+                    {e.prev_val_samples} → {e.new_val_samples}
+                  </td>
+                  <td className={`py-1 ${statusPill(e.status)}`}>
+                    {e.status}
+                    {e.reason ? (
+                      <span className="ml-1 text-muted-foreground">({e.reason})</span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PerClassOnly({ model }: { model: ModelVersion }) {
+  const m = (model.metrics ?? {}) as Record<string, unknown>;
+  const perClass = (m.per_class_map50_95 ?? {}) as Record<string, number>;
+  const valCounts = (m.per_class_val_samples ?? {}) as Record<string, number>;
+  const names = Object.keys(perClass).sort();
+  if (names.length === 0) return null;
+  return (
+    <div className="space-y-2 px-4 py-3 text-sm">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        Per-class mAP50-95
+      </div>
+      <table className="w-full text-xs tabular-nums">
+        <thead className="text-left text-muted-foreground">
+          <tr>
+            <th className="py-1 pr-3 font-medium">Class</th>
+            <th className="py-1 pr-3 font-medium">mAP50-95</th>
+            <th className="py-1 font-medium">Val samples</th>
+          </tr>
+        </thead>
+        <tbody>
+          {names.map((name) => (
+            <tr key={name} className="border-t border-border/50">
+              <td className="py-1 pr-3">{name}</td>
+              <td className="py-1 pr-3">{fmt(perClass[name])}</td>
+              <td className="py-1 text-muted-foreground">
+                {valCounts[name] ?? 0}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ModelDetail({ model }: { model: ModelVersion }) {
+  const m = (model.metrics ?? {}) as Record<string, unknown>;
+  const check = m.regression_check as RegressionCheck | undefined;
+  if (check) return <RegressionPanel check={check} />;
+  return <PerClassOnly model={model} />;
+}
+
 export function ModelsPage() {
   const { data: models = [], isPending } = useModels();
   const activate = useActivateModel();
+  const [open, setOpen] = useState<Set<string>>(new Set());
+
+  const toggle = (id: string) =>
+    setOpen((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const onActivate = async (model: ModelVersion): Promise<void> => {
     try {
@@ -50,6 +232,7 @@ export function ModelsPage() {
           <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
               <tr>
+                <th className="w-8 px-3 py-2" />
                 <th className="px-3 py-2 font-medium">Name</th>
                 <th className="px-3 py-2 font-medium">Kind</th>
                 <th className="px-3 py-2 font-medium">Metrics</th>
@@ -59,38 +242,72 @@ export function ModelsPage() {
               </tr>
             </thead>
             <tbody>
-              {models.map((model) => (
-                <tr key={model.id} className="border-t border-border">
-                  <td className="px-3 py-2">{model.name}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {model.kind}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums">
-                    {metricSummary(model)}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-muted-foreground">
-                    {model.trained_on ?? "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    {model.is_active ? (
-                      <span className="text-green-600">active</span>
-                    ) : (
-                      <span className="text-muted-foreground">inactive</span>
+              {models.map((model) => {
+                const m = (model.metrics ?? {}) as Record<string, unknown>;
+                const expandable =
+                  model.kind === "yolo" &&
+                  (m.regression_check !== undefined ||
+                    m.per_class_map50_95 !== undefined);
+                const isOpen = open.has(model.id);
+                return (
+                  <Fragment key={model.id}>
+                    <tr className="border-t border-border">
+                      <td className="px-3 py-2">
+                        {expandable && (
+                          <button
+                            type="button"
+                            aria-label={isOpen ? "Collapse" : "Expand"}
+                            onClick={() => toggle(model.id)}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            {isOpen ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">{model.name}</td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {model.kind}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">
+                        {metricSummary(model)}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-muted-foreground">
+                        {model.trained_on ?? "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {model.is_active ? (
+                          <span className="text-green-600">active</span>
+                        ) : (
+                          <span className="text-muted-foreground">inactive</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {!model.is_active && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void onActivate(model)}
+                          >
+                            Activate
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandable && isOpen && (
+                      <tr className="bg-muted/30">
+                        <td />
+                        <td colSpan={6}>
+                          <ModelDetail model={model} />
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {!model.is_active && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void onActivate(model)}
-                      >
-                        Activate
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

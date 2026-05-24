@@ -30,11 +30,6 @@ tick the relevant spec doc.
   `apps/worker/src/worker/tasks/backfill_detections.py` (the task is already
   routed to the `gpu` queue in `vd_tasks/app.py`).
 
-- **Per-class mAP regression guard** in `vd.finetune_yolo` — only the global
-  aggregate guard (`mAP50-95 ≥ prev − 0.01`) is implemented. *Why:* Phase 5
-  kept the guard simple. *Where:* `apps/worker/src/worker/tasks/finetune_yolo.py`
-  — needs per-class val metrics out of Ultralytics. (spec 06)
-
 - **Per-class oversampling** in the YOLO dataset builder — a 100-label custom
   class is swamped by thousands of COCO labels. *Why:* not needed for the
   first custom class. *Where:* `apps/worker/src/worker/dataset.py`. (spec 06)

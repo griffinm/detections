@@ -31,6 +31,10 @@ class YoloDatasetManifest:
     class_names: list[str]
     class_ids: list[uuid.UUID]
     counts: dict[str, int]
+    # Per-class label counts in each split, keyed by class name. The regression
+    # guard needs the val counts to decide which classes are well-represented
+    # enough to be gated on.
+    per_class_counts: dict[str, dict[str, int]]
 
 
 def _yolo_label_line(class_idx: int, bbox: dict[str, float]) -> str | None:
@@ -141,12 +145,18 @@ async def build_yolo_dataset(
         (root / "labels" / split).mkdir(parents=True, exist_ok=True)
 
     detections_written = 0
+    per_class_counts: dict[str, dict[str, int]] = {
+        split: dict.fromkeys(class_names, 0) for split in _SPLITS
+    }
     for split, ids in splits.items():
         for fid in ids:
             _link(settings.frames_dir / frame_path[fid], root / "images" / split / f"{fid}.jpg")
             lines = labels_by_frame[fid]
             (root / "labels" / split / f"{fid}.txt").write_text("\n".join(lines) + "\n")
             detections_written += len(lines)
+            for line in lines:
+                idx = int(line.split(" ", 1)[0])
+                per_class_counts[split][class_names[idx]] += 1
 
     data_yaml = root / "data.yaml"
     data_yaml.write_text(_data_yaml(root, class_names))
@@ -160,4 +170,5 @@ async def build_yolo_dataset(
         class_names=class_names,
         class_ids=class_ids,
         counts=counts,
+        per_class_counts=per_class_counts,
     )

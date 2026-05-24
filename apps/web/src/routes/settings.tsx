@@ -28,6 +28,9 @@ const SECTIONS: { title: string; keys: string[] }[] = [
       "subclass_retrain_threshold",
       "yolo_finetune_epochs",
       "yolo_finetune_imgsz",
+      "yolo_regression_tolerance",
+      "yolo_per_class_regression_tolerance",
+      "yolo_per_class_min_val_samples",
     ],
   },
   {
@@ -50,6 +53,12 @@ const DESCRIPTIONS: Record<string, string> = {
   subclass_retrain_threshold: "New labels that trigger a classifier retrain.",
   yolo_finetune_epochs: "Epochs per fine-tune run.",
   yolo_finetune_imgsz: "Training image size (px).",
+  yolo_regression_tolerance:
+    "Aggregate mAP50-95 drop tolerated when activating a new fine-tune.",
+  yolo_per_class_regression_tolerance:
+    "Per-class mAP50-95 drop tolerated for well-represented classes.",
+  yolo_per_class_min_val_samples:
+    "Minimum val labels a class needs in both models for the per-class guard to apply.",
   delete_processed_videos: "Delete the source video when a clip is removed.",
   prune_similar_frames:
     "Drop near-duplicate frames within a clip after detection.",

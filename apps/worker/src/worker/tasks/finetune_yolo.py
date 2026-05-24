@@ -12,6 +12,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from vd_db import activate_model_version, load_effective_settings
 from vd_db.models import ModelVersion, TrainingRun
@@ -21,6 +22,74 @@ from worker.dataset import build_yolo_dataset
 from worker.db import db_session
 from worker.events import publish
 from worker.models import get_or_register_yolo
+
+
+def _evaluate_regression(
+    prev_metrics: dict[str, Any] | None,
+    new_map50_95: float,
+    new_per_class: dict[str, float],
+    new_val_counts: dict[str, int],
+    aggregate_tol: float,
+    per_class_tol: float,
+    min_val_samples: int,
+) -> dict[str, Any]:
+    """Decide whether a new fine-tune may replace the previous active model.
+
+    Returns a structured breakdown — booleans plus a per-class diff list — so
+    the result can be stored on `training_runs.metrics` and rendered on the
+    models page without re-running the comparison.
+
+    The aggregate guard remains the floor; the per-class guard adds *only*
+    blocking signal for classes well-represented in both models. Classes
+    below the val-sample threshold in either model are flagged as `skipped`
+    so the reason for not gating them is visible.
+    """
+    prev_metrics = prev_metrics or {}
+    prev_map = prev_metrics.get("val_map50_95")
+    prev_per_class: dict[str, float] = prev_metrics.get("per_class_map50_95") or {}
+    prev_val_counts: dict[str, int] = prev_metrics.get("per_class_val_samples") or {}
+
+    aggregate = {
+        "prev": prev_map,
+        "new": new_map50_95,
+        "tolerance": aggregate_tol,
+        "pass": prev_map is None or new_map50_95 >= prev_map - aggregate_tol,
+    }
+
+    per_class: list[dict[str, Any]] = []
+    for name in sorted(set(prev_per_class) | set(new_per_class)):
+        prev_v = prev_per_class.get(name)
+        new_v = new_per_class.get(name)
+        prev_n = prev_val_counts.get(name, 0)
+        new_n = new_val_counts.get(name, 0)
+        entry: dict[str, Any] = {
+            "class": name,
+            "prev": prev_v,
+            "new": new_v,
+            "prev_val_samples": prev_n,
+            "new_val_samples": new_n,
+        }
+        if prev_v is None or new_v is None:
+            entry["status"] = "skipped"
+            entry["reason"] = "class absent from one model"
+        elif prev_n < min_val_samples or new_n < min_val_samples:
+            entry["status"] = "skipped"
+            entry["reason"] = f"<{min_val_samples} val samples"
+        elif new_v >= prev_v - per_class_tol:
+            entry["status"] = "pass"
+        else:
+            entry["status"] = "fail"
+        per_class.append(entry)
+
+    blocked = [e for e in per_class if e["status"] == "fail"]
+    return {
+        "aggregate": aggregate,
+        "per_class": per_class,
+        "per_class_tolerance": per_class_tol,
+        "min_val_samples": min_val_samples,
+        "blocked_classes": [e["class"] for e in blocked],
+        "activate": aggregate["pass"] and not blocked,
+    }
 
 
 async def _finetune_yolo_async(training_run_id: str) -> str:
@@ -42,7 +111,7 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
 
         version = await get_or_register_yolo(session, settings)
         base_weights = version.weights_path
-        prev_map = (version.metrics or {}).get("val_map50_95")
+        prev_metrics = version.metrics or {}
 
         manifest = await build_yolo_dataset(session, settings, run_id)
         if manifest.counts["train"] == 0:
@@ -114,6 +183,18 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
         return "failed"
 
     async with db_session() as session:
+        settings = await load_effective_settings(session)
+        val_counts = manifest.per_class_counts.get("val", {})
+        regression = _evaluate_regression(
+            prev_metrics=prev_metrics,
+            new_map50_95=result.map50_95,
+            new_per_class=result.per_class_map50_95,
+            new_val_counts=val_counts,
+            aggregate_tol=settings.yolo_regression_tolerance,
+            per_class_tol=settings.yolo_per_class_regression_tolerance,
+            min_val_samples=settings.yolo_per_class_min_val_samples,
+        )
+
         new_version = ModelVersion(
             kind="yolo",
             name=f"yolo11l-ft-{run_id.hex[:8]}",
@@ -127,14 +208,17 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
                 "val_map50": result.map50,
                 "precision": result.precision,
                 "recall": result.recall,
+                "per_class_map50_95": result.per_class_map50_95,
+                "per_class_map50": result.per_class_map50,
+                "per_class_val_samples": val_counts,
+                "regression_check": regression,
             },
             is_active=False,
         )
         session.add(new_version)
         await session.flush()
 
-        # Regression guard: a worse model is registered but not activated.
-        activate = prev_map is None or result.map50_95 >= prev_map - 0.01
+        activate = regression["activate"]
         if activate:
             await activate_model_version(session, new_version)
 
@@ -149,7 +233,7 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
             "precision": result.precision,
             "recall": result.recall,
             "activated": activate,
-            "prev_map50_95": prev_map,
+            "regression_check": regression,
             "dataset": manifest.counts,
             "model_version_id": str(new_version.id),
         }

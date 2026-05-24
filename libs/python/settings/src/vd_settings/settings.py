@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     yolo_base_model: str = "yolo11l.pt"
     yolo_finetune_epochs: int = 50
     yolo_finetune_imgsz: int = 960
+    # Activation guard: a new fine-tune activates only if its aggregate val
+    # mAP50-95 is within `yolo_regression_tolerance` of the previous active's,
+    # AND every class with ≥ `yolo_per_class_min_val_samples` val labels in
+    # both models stays within `yolo_per_class_regression_tolerance`. The
+    # per-class tolerance is looser because per-class AP is noisier on small
+    # val splits.
+    yolo_regression_tolerance: float = 0.01
+    yolo_per_class_regression_tolerance: float = 0.05
+    yolo_per_class_min_val_samples: int = 10
     insightface_pack: str = "buffalo_l"
 
     # retention
@@ -71,6 +80,9 @@ OVERRIDABLE_KEYS: tuple[str, ...] = (
     "subclass_retrain_threshold",
     "yolo_finetune_epochs",
     "yolo_finetune_imgsz",
+    "yolo_regression_tolerance",
+    "yolo_per_class_regression_tolerance",
+    "yolo_per_class_min_val_samples",
     "delete_processed_videos",
     "prune_similar_frames",
     "frame_similarity_threshold",

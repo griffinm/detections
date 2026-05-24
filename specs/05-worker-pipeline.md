@@ -76,10 +76,41 @@ failure handler fires a `clip.failed` callback for any clip with a
   `vd.dedup_clip_frames`).
 - Schedule `vd.detect_frame_batch` tasks on the `gpu` queue (`VD_DETECT_BATCH_SIZE`
   frames per task, default 16, to amortize model warm-up).
+- If `VD_COMPRESS_PROCESSED_VIDEOS` is set, schedule `vd.compress_video` on
+  `gpu` too — it FIFOs behind detect so it doesn't delay detection latency.
 - Set clip status → `detecting` (or straight to `done` if the clip yielded
   no frames).
 
 Idempotency: the upsert + a per-frame status make this safely re-runnable.
+
+### `vd.compress_video(clip_id: uuid)` *(`gpu` queue)*
+
+Re-encodes the source video at `clip.final_path` to HEVC using the GPU's
+NVENC engine, then atomically replaces the original. Disk reclamation
+without losing the file (`vd.reextract_frames` still works against the
+compressed clip).
+
+- Skip if `clip.codec` is already `'hevc'` / `'h265'`, the row is missing,
+  or `final_path` doesn't resolve to a file — keeps retries and
+  `vd.reextract_frames` re-runs idempotent.
+- Run ffmpeg (`hevc_nvenc`, `-rc vbr -cq <VD_COMPRESS_CRF> -b:v 0`,
+  `-preset p5`, `-c:a copy`) writing to `<stem>.compress.tmp<ext>` next to
+  the original. Resolution and frame rate are preserved (no `-vf`/`-r`).
+- On non-zero exit: unlink the tmp, raise — Celery retries up to
+  `max_retries`. The original is never touched until the encode succeeds.
+- On success: `os.replace(tmp, final_path)` (atomic on POSIX), then update
+  `clips.codec='hevc'` and `clips.size_bytes` from the new file's `stat`.
+- Publish `clip.compressed` with `{clip_id, size_before, size_after}`.
+- Compression is non-fatal: a clip whose compress task exhausts retries
+  stays usable — the detect/recognize/embed pipeline runs from the JPEG
+  frames and is independent of the source video format.
+
+Runs on `gpu` because `hevc_nvenc` needs the NVIDIA driver mounted by the
+container toolkit (the `cpu` worker has no GPU access). NVENC is a
+dedicated silicon block separate from the CUDA cores, so it doesn't
+contend with YOLO for compute — but the worker's `concurrency=1`
+serializes them at the Celery level. Splitting compression onto its own
+queue is deferred (see `specs/deferred.md`).
 
 ### `vd.detect_frame_batch(frame_ids: list[uuid])`
 - Load active YOLO model (process-level singleton; loaded once at worker boot).
@@ -450,6 +481,12 @@ Failure handling:
 - `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD` — labels needed (default 100).
 - `VD_SUBCLASS_RETRAIN_THRESHOLD` — labels needed (default 25).
 - `VD_DELETE_PROCESSED_VIDEOS` — bool (default false).
+- `VD_COMPRESS_PROCESSED_VIDEOS` — bool (default true). When set, the extract
+  task schedules `vd.compress_video` after the detect batches. Disable to
+  keep the original codec/bitrate on disk.
+- `VD_COMPRESS_CRF` — int (default 22). The constant-quality target passed
+  to `hevc_nvenc` as `-cq` (NVENC's CRF analog; lower = larger + higher
+  quality).
 - `VD_PRUNE_SIMILAR_FRAMES` — bool (default true). Master switch for
   `vd.dedup_clip_frames`; when unset the task is a no-op.
 - `VD_FRAME_SIMILARITY_THRESHOLD` — int (default 6). Max pHash Hamming

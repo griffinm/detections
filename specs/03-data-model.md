@@ -28,12 +28,12 @@ The original ingested video.
 | original_path    | text NOT NULL   | absolute path inside `inbox/` at ingest                |
 | final_path       | text            | where the file ended up (`processed/`)                 |
 | sha256           | text NOT NULL UNIQUE | content hash; ingest dedup                        |
-| size_bytes       | bigint NOT NULL |                                                        |
+| size_bytes       | bigint NOT NULL | overwritten by `vd.compress_video` with the post-HEVC size |
 | duration_sec     | numeric(10,3)   | from ffprobe                                           |
 | fps              | numeric(6,3)    | source fps                                             |
 | width            | int             |                                                        |
 | height           | int             |                                                        |
-| codec            | text            |                                                        |
+| codec            | text            | initial value from ffprobe; `vd.compress_video` flips it to `'hevc'` after a successful transcode (spec 05) |
 | status           | clip_status NOT NULL DEFAULT 'pending' | enum (see below)                |
 | error            | text            | if status='failed'                                     |
 | ingested_at      | timestamptz     |                                                        |

@@ -58,6 +58,9 @@ class Settings(BaseSettings):
 
     # retention
     delete_processed_videos: bool = False
+    # post-extract compression (hevc_nvenc, runs on the gpu worker)
+    compress_processed_videos: bool = True
+    compress_crf: int = 22
 
     # near-duplicate frame pruning
     prune_similar_frames: bool = True
@@ -84,6 +87,8 @@ OVERRIDABLE_KEYS: tuple[str, ...] = (
     "yolo_per_class_regression_tolerance",
     "yolo_per_class_min_val_samples",
     "delete_processed_videos",
+    "compress_processed_videos",
+    "compress_crf",
     "prune_similar_frames",
     "frame_similarity_threshold",
 )

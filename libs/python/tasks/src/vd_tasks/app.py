@@ -20,6 +20,7 @@ celery_app.conf.update(
         "vd.purge_frames": {"queue": "cpu"},
         "vd.delete_clip": {"queue": "cpu"},
         "vd.deliver_callback": {"queue": "cpu"},
+        "vd.compress_video": {"queue": "gpu"},
         "vd.detect_frame_batch": {"queue": "gpu"},
         "vd.recognize_face": {"queue": "gpu"},
         "vd.embed_object": {"queue": "gpu"},

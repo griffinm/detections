@@ -1,6 +1,7 @@
 from . import (
     assign_subclass,
     backfill_embeddings,
+    compress,
     dedup,
     delete_clip,
     deliver_callback,
@@ -19,6 +20,7 @@ from . import (
 __all__ = [
     "assign_subclass",
     "backfill_embeddings",
+    "compress",
     "dedup",
     "delete_clip",
     "deliver_callback",

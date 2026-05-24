@@ -230,7 +230,12 @@ Notes:
   `cpu` (ingest, ffmpeg, DB-bound work). This keeps the single GPU from being
   saturated by ffmpeg jobs.
 - ffmpeg is installed system-wide and called via subprocess. Frame extraction
-  is CPU-bound; running it on the `cpu` worker keeps GPU free for inference.
+  is CPU-bound and runs on the `cpu` worker. Post-extract HEVC compression
+  uses `hevc_nvenc` and runs on the `gpu` worker — the Ubuntu apt `ffmpeg`
+  build links NVENC dynamically against `libnvidia-encode.so.1`, which the
+  Container Toolkit mounts from the host driver, so no custom ffmpeg build
+  is required. (NVENC is a dedicated silicon block separate from the CUDA
+  cores, so it doesn't fight YOLO for compute.)
 - The `gpu`/`cpu` distinction is real, not just an image tag: generic PyPI
   `torch` ships no CUDA kernels. `apps/worker/pyproject.toml` pins `torch`
   (and `torchvision`) to `download.pytorch.org/whl/cu128` under the `gpu`
@@ -358,6 +363,8 @@ class Settings(BaseSettings):
 
     # delete vs retain
     delete_processed_videos: bool = False       # if true, remove from /processed on cleanup
+    compress_processed_videos: bool = True      # if true, transcode to HEVC via NVENC after extract
+    compress_crf: int = 22                       # NVENC -cq (CRF analog)
 
     # external job submission (spec 04 §Jobs, spec 05 vd.deliver_callback)
     webhook_timeout_sec: float = 10.0           # per-attempt POST timeout
@@ -382,6 +389,8 @@ worker. The compose file maps it in via `env_file`.
 | `VD_SUBCLASS_MIN_CONFIDENCE`       | `0.55`                                 | cosine-sim threshold for kNN          |
 | `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD`| `100`                                 | labels needed to trigger fine-tune    |
 | `VD_DETECT_BATCH_SIZE`             | `16`                                   | frames per `vd.detect_frame_batch` task |
+| `VD_COMPRESS_PROCESSED_VIDEOS`     | `true`                                 | schedule `vd.compress_video` after extract (spec 05) |
+| `VD_COMPRESS_CRF`                  | `22`                                   | NVENC `-cq` target quality            |
 | `VD_PRUNE_SIMILAR_FRAMES`          | `true`                                 | enable `vd.dedup_clip_frames` (spec 05) |
 | `VD_FRAME_SIMILARITY_THRESHOLD`    | `6`                                    | max pHash Hamming distance for a dup   |
 | `VD_WEBHOOK_TIMEOUT_SEC`           | `10.0`                                 | per-attempt callback POST timeout      |

@@ -85,6 +85,11 @@ async def _extract_frames_async(clip_id: str) -> int:
             chunk = [str(fid) for fid in kept_ids[start: start + settings.detect_batch_size]]
             celery_app.send_task("vd.detect_frame_batch", args=[chunk], queue="gpu")
 
+        # NVENC compression runs on the gpu queue too; FIFO drains detect
+        # batches before it, so detection latency is unaffected per-clip.
+        if settings.compress_processed_videos:
+            celery_app.send_task("vd.compress_video", args=[clip_id], queue="gpu")
+
         clip = await session.get(Clip, cid)
         if clip is not None:
             clip.status = "done" if not kept_ids else "detecting"

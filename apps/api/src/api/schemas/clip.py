@@ -4,6 +4,22 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class ClipDetectionGroup(BaseModel):
+    """One (class, sub-class) bucket of non-deleted detections on a clip.
+
+    `subclass_id is None` means the bucket is "this class, no sub-class
+    assigned" — still meaningful (e.g. "person 12" with no named identity).
+    """
+
+    class_id: uuid.UUID | None
+    class_name: str | None
+    class_color: str | None
+    subclass_id: uuid.UUID | None
+    subclass_name: str | None
+    subclass_color: str | None
+    count: int
+
+
 class ClipRead(BaseModel):
     id: uuid.UUID
     filename: str
@@ -23,6 +39,8 @@ class ClipRead(BaseModel):
     # Representative frame for list views; injected by the router, None until
     # the clip has at least one kept frame.
     thumbnail_url: str | None = None
+    # De-duped per-(class, sub-class) counts; injected by the list router.
+    detection_summary: list[ClipDetectionGroup] = []
 
     model_config = {"from_attributes": True}
 

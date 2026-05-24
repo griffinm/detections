@@ -8,12 +8,17 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import enqueue, get_db, settings
-from api.schemas.clip import ClipClassSummary, ClipDetail, ClipRead
+from api.schemas.clip import (
+    ClipClassSummary,
+    ClipDetail,
+    ClipDetectionGroup,
+    ClipRead,
+)
 from api.schemas.common import Paginated
 from api.schemas.detection import DetectionGalleryItem
 from api.schemas.frame import FrameRead
 from api.services.gallery import GalleryInclude, query_gallery_items
-from vd_db.models import Class, Clip, DetectionModel, Frame
+from vd_db.models import Class, Clip, DetectionModel, Frame, Subclass
 
 router = APIRouter(prefix="/clips", tags=["clips"])
 
@@ -39,12 +44,14 @@ async def list_clips(
     # One representative thumbnail per clip: the lowest-indexed kept frame that
     # still has a JPEG on disk (object-free frames get pruned).
     thumbs: dict[uuid.UUID, str] = {}
+    summaries: dict[uuid.UUID, list[ClipDetectionGroup]] = {}
     if rows:
+        clip_ids = [c.id for c in rows]
         frame_rows = await db.execute(
             select(Frame.clip_id, Frame.path)
             .distinct(Frame.clip_id)
             .where(
-                Frame.clip_id.in_([c.id for c in rows]),
+                Frame.clip_id.in_(clip_ids),
                 Frame.kept.is_(True),
                 Frame.path.is_not(None),
             )
@@ -52,8 +59,68 @@ async def list_clips(
         )
         thumbs = {cid: f"/files/frames/{path}" for cid, path in frame_rows}
 
+        # One GROUP BY across every clip on the page — avoids N per-clip
+        # summary fetches from the frontend. Ordered so the dominant
+        # (class, sub-class) bucket lands first inside each clip.
+        group_rows = await db.execute(
+            select(
+                Frame.clip_id,
+                DetectionModel.class_id,
+                Class.name.label("class_name"),
+                Class.color_hex.label("class_color"),
+                DetectionModel.subclass_id,
+                Subclass.name.label("subclass_name"),
+                Subclass.color_hex.label("subclass_color"),
+                func.count().label("n"),
+            )
+            .select_from(DetectionModel)
+            .join(Frame, Frame.id == DetectionModel.frame_id)
+            .outerjoin(Class, Class.id == DetectionModel.class_id)
+            .outerjoin(Subclass, Subclass.id == DetectionModel.subclass_id)
+            .where(
+                Frame.clip_id.in_(clip_ids),
+                DetectionModel.deleted_at.is_(None),
+            )
+            .group_by(
+                Frame.clip_id,
+                DetectionModel.class_id,
+                Class.name,
+                Class.color_hex,
+                DetectionModel.subclass_id,
+                Subclass.name,
+                Subclass.color_hex,
+            )
+            .order_by(Frame.clip_id, func.count().desc())
+        )
+        for (
+            clip_id,
+            class_id,
+            class_name,
+            class_color,
+            subclass_id,
+            subclass_name,
+            subclass_color,
+            n,
+        ) in group_rows:
+            summaries.setdefault(clip_id, []).append(
+                ClipDetectionGroup(
+                    class_id=class_id,
+                    class_name=class_name,
+                    class_color=class_color,
+                    subclass_id=subclass_id,
+                    subclass_name=subclass_name,
+                    subclass_color=subclass_color,
+                    count=n,
+                )
+            )
+
     items = [
-        ClipRead.model_validate(c).model_copy(update={"thumbnail_url": thumbs.get(c.id)})
+        ClipRead.model_validate(c).model_copy(
+            update={
+                "thumbnail_url": thumbs.get(c.id),
+                "detection_summary": summaries.get(c.id, []),
+            }
+        )
         for c in rows
     ]
     return Paginated(items=items, total=total or 0)

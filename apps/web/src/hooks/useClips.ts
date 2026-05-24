@@ -1,6 +1,16 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+export interface ClipDetectionGroup {
+  class_id: string | null;
+  class_name: string | null;
+  class_color: string | null;
+  subclass_id: string | null;
+  subclass_name: string | null;
+  subclass_color: string | null;
+  count: number;
+}
+
 export interface Clip {
   id: string;
   filename: string;
@@ -18,6 +28,7 @@ export interface Clip {
   created_at: string;
   updated_at: string;
   thumbnail_url: string | null;
+  detection_summary: ClipDetectionGroup[];
 }
 
 export interface ClipDetail extends Clip {

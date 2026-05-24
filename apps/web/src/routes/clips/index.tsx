@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ClipUploadList } from "@/components/ClipUploadList";
+import { ClassBadge } from "@/components/domain/ClassBadge";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -18,10 +19,42 @@ import {
 import { formatBytes, formatClipName, formatDuration } from "@/lib/format";
 import {
   type Clip,
+  type ClipDetectionGroup,
   useClipsList,
   useClipUploads,
   useDeleteClip,
 } from "@/hooks/useClips";
+
+const SUMMARY_VISIBLE = 4;
+const FALLBACK_COLOR = "#888888";
+
+function DetectionSummary({ groups }: { groups: ClipDetectionGroup[] }) {
+  if (groups.length === 0) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const visible = groups.slice(0, SUMMARY_VISIBLE);
+  const overflow = groups.length - visible.length;
+  return (
+    <div className="flex max-w-[320px] flex-wrap gap-x-3 gap-y-1">
+      {visible.map((g, i) => {
+        const name = g.subclass_name ?? g.class_name ?? "—";
+        const color = g.subclass_color ?? g.class_color ?? FALLBACK_COLOR;
+        const key = `${g.class_id ?? "null"}:${g.subclass_id ?? "null"}:${i}`;
+        return (
+          <span key={key} className="inline-flex items-center gap-1">
+            <ClassBadge name={name} color={color} />
+            <span className="text-xs text-muted-foreground">{g.count}</span>
+          </span>
+        );
+      })}
+      {overflow > 0 && (
+        <span className="self-center text-xs text-muted-foreground">
+          +{overflow} more
+        </span>
+      )}
+    </div>
+  );
+}
 
 // Mirrors the API's accepted video extensions. `video/*` alone misses some
 // container types (notably .mkv) in OS file pickers, so list them explicitly.
@@ -104,6 +137,9 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
       <td className="px-4 py-3">
         <StatusBadge status={clip.status} />
       </td>
+      <td className="px-4 py-3">
+        <DetectionSummary groups={clip.detection_summary} />
+      </td>
       <td className="px-4 py-3 text-sm text-muted-foreground">
         {formatDuration(clip.duration_sec)}
       </td>
@@ -123,7 +159,7 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
 function SkeletonRow() {
   return (
     <tr className="border-b border-border">
-      {[...Array(7)].map((_, i) => (
+      {[...Array(8)].map((_, i) => (
         <td key={i} className="px-4 py-3">
           <div className="h-4 animate-pulse rounded bg-muted" />
         </td>
@@ -187,6 +223,7 @@ export function ClipsList() {
               <th className="w-20 px-4 py-3" aria-label="Preview" />
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Detected</th>
               <th className="px-4 py-3">Duration</th>
               <th className="px-4 py-3">Size</th>
               <th className="px-4 py-3">Ingested</th>
@@ -198,7 +235,7 @@ export function ClipsList() {
             {data?.items.length === 0 && (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   className="px-4 py-12 text-center text-sm text-muted-foreground"
                 >
                   No clips yet. Use{" "}

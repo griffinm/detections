@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install ruff
+        run: uv tool install ruff
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint Python (ruff)
+        run: ruff check .
+
+      - name: Lint web
+        run: pnpm --filter web lint
+
+      - name: Typecheck web
+        run: pnpm --filter web typecheck
+
+      - name: Test web
+        run: pnpm --filter web test
+
+      # Python mypy + pytest are intentionally not gated yet — see
+      # specs/deferred.md / docs/runbook.md. To enable, install per-project
+      # deps (`for p in apps/api apps/worker apps/ingest-watcher libs/python/*;
+      # do (cd $p && uv sync --all-groups); done`), bring up postgres + redis
+      # (docker compose -f docker/dev-compose.yml up -d), then run mypy and
+      # pytest per project. Pre-existing strict-mypy errors in libs/python/db
+      # and one test failure in apps/api/tests/test_classes.py need fixing
+      # first.
+
+  build-and-deploy:
+    needs: gate
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: echo "TAG=${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build API image
+        run: docker build -t nas.malfin.com:10100/vd-api:${{ steps.tag.outputs.TAG }} -f docker/api/Dockerfile .
+
+      - name: Build Web image
+        run: docker build -t nas.malfin.com:10100/vd-web:${{ steps.tag.outputs.TAG }} -f docker/web/Dockerfile .
+
+      - name: Build Worker image
+        run: docker build -t nas.malfin.com:10100/vd-worker:${{ steps.tag.outputs.TAG }} -f docker/worker/Dockerfile --target gpu .
+
+      - name: Build Ingest Watcher image
+        run: docker build -t nas.malfin.com:10100/vd-ingest-watcher:${{ steps.tag.outputs.TAG }} -f docker/watcher/Dockerfile .
+
+      - name: Push API image
+        run: docker push nas.malfin.com:10100/vd-api:${{ steps.tag.outputs.TAG }}
+
+      - name: Push Web image
+        run: docker push nas.malfin.com:10100/vd-web:${{ steps.tag.outputs.TAG }}
+
+      - name: Push Worker image
+        run: docker push nas.malfin.com:10100/vd-worker:${{ steps.tag.outputs.TAG }}
+
+      - name: Push Ingest Watcher image
+        run: docker push nas.malfin.com:10100/vd-ingest-watcher:${{ steps.tag.outputs.TAG }}
+
+      - name: Deploy to production
+        uses: appleboy/ssh-action@v1
+        with:
+          host: layla.malfin.com
+          username: griffin
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            TAG=${{ steps.tag.outputs.TAG }}
+            sed -i "s|^VD_API_IMAGE=.*|VD_API_IMAGE=nas.malfin.com:10100/vd-api:${TAG}|"               ~/docker/.env
+            sed -i "s|^VD_WEB_IMAGE=.*|VD_WEB_IMAGE=nas.malfin.com:10100/vd-web:${TAG}|"               ~/docker/.env
+            sed -i "s|^VD_WORKER_IMAGE=.*|VD_WORKER_IMAGE=nas.malfin.com:10100/vd-worker:${TAG}|"      ~/docker/.env
+            sed -i "s|^VD_WATCHER_IMAGE=.*|VD_WATCHER_IMAGE=nas.malfin.com:10100/vd-ingest-watcher:${TAG}|" ~/docker/.env
+            cd $HOME/docker && unset DOCKER_HOST && \
+              docker compose --project-directory $HOME/docker -f compose/video-detections.yml \
+                up -d --pull always vd-api vd-web vd-worker-cpu vd-worker-gpu vd-ingest-watcher vd-flower

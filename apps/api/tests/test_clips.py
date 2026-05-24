@@ -101,7 +101,7 @@ async def test_upload_writes_video_to_inbox(client, inbox):  # type: ignore[no-u
     )
     assert resp.status_code == 202
     body = resp.json()
-    assert body == {"filename": "cat.mp4", "size_bytes": 12}
+    assert body == {"filename": "cat.mp4", "size_bytes": 13}
 
     # The finished video is in the inbox; no partial `.part` file lingers.
     assert (inbox / "cat.mp4").read_bytes() == b"\x00\x01video-bytes"

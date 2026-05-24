@@ -1,13 +1,13 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from vd_db.base import Base
 import vd_db.models  # noqa: F401 — ensure all models are registered
+from alembic import context
+from vd_db.base import Base
 
 # Alembic Config
 config = context.config

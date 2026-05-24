@@ -5,6 +5,7 @@ The API only writes the `training_runs` row and enqueues the task on the
 """
 
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,6 +20,7 @@ from api.schemas.training import (
     TrainingRunDetail,
     TrainingRunRead,
 )
+from api.services.events import publish
 from api.utils.pagination import CursorPage, apply_keyset, build_page, cursor_params
 from vd_db.models import TrainingRun
 
@@ -148,3 +150,30 @@ async def get_training_run(
         raise HTTPException(status_code=404, detail="Training run not found")
     base = TrainingRunRead.model_validate(run).model_dump()
     return TrainingRunDetail(**base, log_tail=_log_tail(run.log_path))
+
+
+@router.post("/{run_id}/cancel", response_model=TrainingRunRead)
+async def cancel_training_run(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> TrainingRun:
+    # Best-effort: flips the DB row. A genuinely-running task won't observe
+    # this mid-training (it only checks status at start) and may still overwrite
+    # the row on completion — that's fine; the endpoint exists to clear runs
+    # already orphaned by a worker crash.
+    run = await db.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    if run.status not in ("queued", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel a run with status {run.status!r}",
+        )
+    run.status = "cancelled"
+    run.finished_at = datetime.now(UTC)
+    if not run.error:
+        run.error = "cancelled by user"
+    await db.commit()
+    await db.refresh(run)
+    await publish("training_run.update", training_run_id=str(run.id), status="cancelled")
+    return run

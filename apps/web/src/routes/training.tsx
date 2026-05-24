@@ -13,6 +13,7 @@ import {
   Sparkles,
   Tag,
   Target,
+  XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { formatElapsed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useClasses, type VdClass } from "@/hooks/useClasses";
 import {
+  useCancelTraining,
   useStartTraining,
   useTrainingRun,
   useTrainingRunCounts,
@@ -456,6 +458,17 @@ function RunDetailHeader({
   const duration = runDurationSec(run, now);
   const modelId = asString(run.metrics?.model_version_id);
   const activated = run.metrics?.activated === true;
+  const cancel = useCancelTraining();
+  const cancellable = run.status === "running" || run.status === "queued";
+  const onCancel = async () => {
+    if (!window.confirm("Cancel this training run?")) return;
+    try {
+      await cancel.mutateAsync(run.id);
+      toast.success("Training run cancelled");
+    } catch {
+      toast.error("Could not cancel training run");
+    }
+  };
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -467,8 +480,22 @@ function RunDetailHeader({
             Active model
           </span>
         )}
-        <div className="ml-auto font-mono text-[11px] text-muted-foreground">
-          {run.id.slice(0, 8)}
+        <div className="ml-auto flex items-center gap-2">
+          {cancellable && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onCancel()}
+              disabled={cancel.isPending}
+              title="Mark this run as cancelled. Use to clear runs left stuck after a worker restart."
+            >
+              <XCircle className="h-3.5 w-3.5" />
+              Cancel
+            </Button>
+          )}
+          <div className="font-mono text-[11px] text-muted-foreground">
+            {run.id.slice(0, 8)}
+          </div>
         </div>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">

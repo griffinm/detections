@@ -92,3 +92,17 @@ export function useStartTraining() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["trainingRuns"] }),
   });
 }
+
+export function useCancelTraining() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (runId: string): Promise<TrainingRun> => {
+      const res = await fetch(`/api/training-runs/${runId}/cancel`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to cancel training run");
+      return res.json() as Promise<TrainingRun>;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["trainingRuns"] }),
+  });
+}

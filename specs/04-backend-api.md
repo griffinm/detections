@@ -346,6 +346,12 @@ same-host LAN.
   status filter. (This is the canonical shape for any future faceted-counts
   endpoint; see "Pagination" below.)
 - `GET /training-runs/{id}` — incl. tail of log + metrics.
+- `POST /training-runs/{id}/cancel` — flips a `queued`/`running` row to
+  `cancelled`, publishes `training_run.update`. Best-effort: a genuinely
+  in-flight task won't observe the cancel mid-training and may still
+  overwrite the row on completion — the endpoint exists to clear runs
+  orphaned by a worker crash (worker also sweeps these on boot, see spec 05).
+  Returns 409 if the run already terminated.
 
 ### Metrics *(Phase 6 — computed on-the-fly, no materialized view)*
 - `GET /metrics/accuracy?bucket=day|week&from=&to=&class_id=&model_version_id=`

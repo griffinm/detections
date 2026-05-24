@@ -196,6 +196,14 @@ improvement vs per-frame inference.
   6. Mark the run `succeeded`/`failed`; broadcast `model.active_changed`.
 - Training failures (OOM, bad data) are terminal — the run is marked `failed`
   and the task returns; no Celery retry.
+- **Orphan sweep on worker boot** (`worker/orphans.py`): the `worker_ready`
+  Celery signal — gated on the worker consuming the `train` queue — flips
+  any `TrainingRun` left at `status='running'` to `failed` with
+  `error='worker restarted before completion'`. Single-host single-worker
+  means a `running` row that survives a worker restart is by definition
+  stale; without the sweep, a crash mid-train (OOM, container restart,
+  deploy) would show as phantom in-progress training forever. The cpu
+  worker shares the same codebase but the handler no-ops there.
 
 ### `vd.train_subclass_classifier(training_run_id: uuid)`
 - The API creates the `training_runs` row (`kind='classifier'`,

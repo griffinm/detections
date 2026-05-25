@@ -368,3 +368,79 @@ async def test_predicted_groups_excludes_reviewed(client, session):  # type: ign
     assert len(groups) == 1
     assert groups[0]["count"] == 1
     assert groups[0]["sample_detection_ids"] == [str(unseen.id)]
+
+
+# ---------------------------------------------------------------------------
+# Similarity clusters
+# ---------------------------------------------------------------------------
+
+_FACE_DIM = 512
+
+
+def _onehot(index: int, dim: int = _FACE_DIM) -> list[float]:
+    return [1.0 if k == index else 0.0 for k in range(dim)]
+
+
+async def test_similarity_clusters_groups_by_embedding(client, session):  # type: ignore[no-untyped-def]
+    person = await session.scalar(select(Class.id).where(Class.name == "person"))
+    _, frames = await _seed_clip(session, n_frames=4)
+    # Two pairs of identical embeddings: rows 0+2 cluster together, 1+3 together.
+    embeddings = [_onehot(0), _onehot(1), _onehot(0), _onehot(1)]
+    dets = []
+    for frame, emb in zip(frames, embeddings, strict=True):
+        det = _detection(frame.id, person)
+        det.face_embedding = emb
+        session.add(det)
+        dets.append(det)
+    await session.commit()
+
+    resp = await client.get(
+        f"/api/labeling/similarity-clusters?class_id={person}&cluster_size=2"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["embedding_kind"] == "face"
+    assert body["pool_size"] == 4
+    assert body["pool_truncated"] is False
+    assert body["remaining"] == 0
+    assert len(body["clusters"]) == 2
+    # Each cluster has its seed plus its near-twin; the cross-pair members must
+    # not appear in the same cluster.
+    cluster_sets = [
+        {m["id"] for m in c["members"]} for c in body["clusters"]
+    ]
+    assert {str(dets[0].id), str(dets[2].id)} in cluster_sets
+    assert {str(dets[1].id), str(dets[3].id)} in cluster_sets
+
+
+async def test_similarity_clusters_excludes_reviewed_and_assigned(client, session):  # type: ignore[no-untyped-def]
+    person = await session.scalar(select(Class.id).where(Class.name == "person"))
+    sub = Subclass(class_id=person, name="rex", color_hex="#aa0000", is_active=True)
+    session.add(sub)
+    await session.flush()
+
+    _, frames = await _seed_clip(session, n_frames=3)
+    # 0: eligible (un-reviewed, un-assigned)
+    # 1: already assigned -> excluded
+    # 2: reviewed -> excluded
+    eligible = _detection(frames[0].id, person)
+    eligible.face_embedding = _onehot(0)
+    assigned = _detection(frames[1].id, person)
+    assigned.face_embedding = _onehot(1)
+    assigned.subclass_id = sub.id
+    reviewed = _detection(frames[2].id, person, reviewed=True)
+    reviewed.face_embedding = _onehot(2)
+    session.add_all([eligible, assigned, reviewed])
+    await session.commit()
+
+    body = (
+        await client.get(f"/api/labeling/similarity-clusters?class_id={person}")
+    ).json()
+    member_ids = {m["id"] for c in body["clusters"] for m in c["members"]}
+    assert member_ids == {str(eligible.id)}
+    assert body["pool_size"] == 1
+
+
+async def test_similarity_clusters_requires_class_id(client):  # type: ignore[no-untyped-def]
+    resp = await client.get("/api/labeling/similarity-clusters")
+    assert resp.status_code == 422  # FastAPI: missing required query param

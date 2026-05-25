@@ -35,6 +35,48 @@ export interface BulkReviewResult {
   affected_frame_ids: string[];
 }
 
+export type EmbeddingKind = "face" | "object" | "mixed";
+
+export interface SimilarityCluster {
+  seed_id: string;
+  avg_distance: number;
+  members: DetectionGalleryItem[];
+}
+
+export interface SimilarityClustersResponse {
+  clusters: SimilarityCluster[];
+  embedding_kind: EmbeddingKind;
+  pool_size: number;
+  pool_truncated: boolean;
+  remaining: number;
+}
+
+export function useSimilarityClusters(opts: {
+  classId: string | undefined;
+  clusterSize?: number;
+  maxClusters?: number;
+}) {
+  const { classId, clusterSize, maxClusters } = opts;
+  return useQuery<SimilarityClustersResponse>({
+    queryKey: [
+      "similarity-clusters",
+      classId ?? null,
+      clusterSize ?? null,
+      maxClusters ?? null,
+    ],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ class_id: classId as string });
+      if (clusterSize !== undefined) qs.set("cluster_size", String(clusterSize));
+      if (maxClusters !== undefined) qs.set("max_clusters", String(maxClusters));
+      const res = await fetch(`/api/labeling/similarity-clusters?${qs}`);
+      if (!res.ok) throw new Error("Failed to fetch similarity clusters");
+      return res.json() as Promise<SimilarityClustersResponse>;
+    },
+    enabled: Boolean(classId),
+    staleTime: 5_000,
+  });
+}
+
 export function usePredictedGroups(opts: {
   classId?: string;
   minConfidence?: number;
@@ -143,6 +185,7 @@ export function useBulkApply() {
       // Anything that lists detections, queues, or per-frame state is now stale.
       qc.invalidateQueries({ queryKey: ["predicted-groups"] });
       qc.invalidateQueries({ queryKey: ["predicted-group-detections"] });
+      qc.invalidateQueries({ queryKey: ["similarity-clusters"] });
       qc.invalidateQueries({ queryKey: ["clip-detections"] });
       qc.invalidateQueries({ queryKey: ["clip-class-summary"] });
       qc.invalidateQueries({ queryKey: ["labeling-queue"] });

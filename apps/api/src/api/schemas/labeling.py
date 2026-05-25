@@ -4,8 +4,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from api.schemas.detection import DetectionGalleryItem
+
 
 ConfidenceBucket = Literal["high", "med", "low"]
+EmbeddingKind = Literal["face", "object", "mixed"]
 
 
 class LabelingQueueItem(BaseModel):
@@ -53,9 +56,7 @@ class BulkReviewRequest(BaseModel):
     @model_validator(mode="after")
     def _at_least_one_field(self) -> "BulkReviewRequest":
         if not (self.model_fields_set & {"class_id", "subclass_id", "reviewed"}):
-            raise ValueError(
-                "Provide at least one of class_id, subclass_id, reviewed"
-            )
+            raise ValueError("Provide at least one of class_id, subclass_id, reviewed")
         return self
 
 
@@ -64,3 +65,34 @@ class BulkReviewResponse(BaseModel):
     skipped: int
     audits_written: int
     affected_frame_ids: list[uuid.UUID]
+
+
+class SimilarityCluster(BaseModel):
+    """One greedy-kNN cluster of similar un-reviewed detections.
+
+    The seed is whichever pool member was popped first (oldest by created_at);
+    `members` carries the seed followed by its nearest neighbors. `avg_distance`
+    is the mean cosine distance of neighbors from the seed — 0 = identical,
+    higher = looser cluster.
+    """
+
+    seed_id: uuid.UUID
+    avg_distance: float
+    members: list[DetectionGalleryItem]
+
+
+class SimilarityClustersResponse(BaseModel):
+    """Result of `GET /labeling/similarity-clusters`.
+
+    `pool_size` counts eligible detections (class-matched, un-reviewed,
+    un-assigned, embedding present). `pool_truncated` is true when the pool
+    exceeded `max_pool` and only the oldest `max_pool` were used. `remaining`
+    is detections in the pool that didn't fit in any returned cluster (the
+    user must refresh after reviewing some to surface them).
+    """
+
+    clusters: list[SimilarityCluster]
+    embedding_kind: EmbeddingKind
+    pool_size: int
+    pool_truncated: bool
+    remaining: int

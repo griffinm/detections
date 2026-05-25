@@ -221,6 +221,37 @@ ordered by `frame_index` so the clip reads left-to-right. Multi-select supports
 click, shift-click range, and Select all / Clear; the Apply target is the
 sub-class chosen from a Select. Same bulk endpoint as above.
 
+### Similarity clusters (`/labeling/similarity`)
+
+Companion to `/labeling/groups`: that view groups by the auto-assigner's
+`predicted_subclass_id`; this one ignores predictions and clusters un-reviewed,
+un-assigned detections of one class purely by embedding similarity. Useful
+when the auto-assigner has nothing to commit yet (no examples, sub-classes
+not seeded, kNN below `subclass_min_confidence`).
+
+Backend: `GET /api/labeling/similarity-clusters?class_id=...&cluster_size=8&max_clusters=40&max_pool=2000`.
+Pool = detections where `class_id=:id AND reviewed=false AND subclass_id IS NULL
+AND deleted_at IS NULL AND frames.kept = true AND any embedding non-null`,
+oldest first, capped at `max_pool` (`pool_truncated=true` when exceeded). The
+handler does greedy seed-iteration: pop the oldest un-clustered detection as
+the seed, fetch its `cluster_size - 1` nearest neighbors from the remaining
+pool via pgvector cosine distance over the HNSW indexes
+(`ix_detections_{face,object}_embedding`), emit one cluster, repeat until
+`max_clusters` or the pool is exhausted. The face-vs-object embedding dispatch
+mirrors `vd.assign_subclass` (face beats object when both are present);
+`embedding_kind` reports which space the class actually used. Anything that
+didn't fit appears as `remaining` so the UI can prompt for a refresh after
+the user labels some.
+
+The page renders one `<DetectionTileGrid>` per cluster, all sharing the same
+`selectedIds` set so selection composes across clusters. Each cluster has a
+**Select cluster / Deselect cluster** toggle for the common "this whole
+group is one sub-class" case. The toolbar is a `<Select>` of `class`
+sub-classes plus an **Apply** button that calls the same
+`POST /api/labeling/bulk-review` with `{class_id, subclass_id, reviewed:true}` —
+class is passed alongside subclass so the bulk endpoint's class-coercion path
+handles rows whose `class_id` somehow drifted from the filter.
+
 ### Unified-apply semantics
 
 `POST /api/labeling/bulk-review` accepts any subset of `{class_id,
@@ -231,8 +262,9 @@ per-detection PATCH — `user_reassign` when class or subclass changes,
 where the chosen sub-class would belong to a different class (without an
 overriding `class_id` in the same call) are silently skipped and surfaced
 in the response as `skipped`. The mutation invalidates the affected
-TanStack Query caches (`predicted-groups`, `clip-detections`,
-`labeling-queue`, the class/sub-class galleries, and any open `frames/:id`
+TanStack Query caches (`predicted-groups`, `similarity-clusters`,
+`clip-detections`, `labeling-queue`, the class/sub-class galleries, and
+any open `frames/:id`
 queries via the response's `affected_frame_ids`); SSE handles open frame
 views in real time.
 
@@ -242,9 +274,10 @@ views in real time.
   frame; a bulk action can touch hundreds of detections across many frames.
   Re-running bulk with the previous state is the workaround until a
   general bulk-undo is justified.
-- **kNN "find similar" sidebar inside the per-frame view**, embedding cluster
-  discovery, pseudo-tracks via IoU, auto-propagation on a single label.
-  Tracked alongside the existing `recent corrections` queue strategy.
+- **kNN "find similar" sidebar inside the per-frame view**, pseudo-tracks via
+  IoU, auto-propagation on a single label. Tracked alongside the existing
+  `recent corrections` queue strategy. (Bulk embedding-cluster discovery now
+  lives on `/labeling/similarity`.)
 
 ## Class / sub-class detail page
 

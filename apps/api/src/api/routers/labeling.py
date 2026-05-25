@@ -10,21 +10,26 @@ reason per row exactly like the per-detection PATCH.
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
-from api.schemas.detection import DetectionGalleryItem
+from api.schemas.detection import Bbox, DetectionGalleryItem
 from api.schemas.labeling import (
     BulkReviewRequest,
     BulkReviewResponse,
     ConfidenceBucket,
+    EmbeddingKind,
     LabelingQueueItem,
     PredictedGroup,
+    SimilarityCluster,
+    SimilarityClustersResponse,
 )
 from api.services.audits import make_audit
+from api.services.crops import crop_url
 from api.services.events import publish
 from api.services.gallery import query_gallery_items
 from api.services.training_service import maybe_trigger_training
@@ -202,14 +207,158 @@ async def get_predicted_group_detections(
     if bucket == "high":
         where = where & (DetectionModel.confidence_subclass >= _BUCKET_HIGH)
     elif bucket == "med":
-        where = where & (
-            DetectionModel.confidence_subclass >= _BUCKET_MED
-        ) & (DetectionModel.confidence_subclass < _BUCKET_HIGH)
+        where = (
+            where
+            & (DetectionModel.confidence_subclass >= _BUCKET_MED)
+            & (DetectionModel.confidence_subclass < _BUCKET_HIGH)
+        )
     elif bucket == "low":
         where = where & (DetectionModel.confidence_subclass < _BUCKET_MED)
 
     return await query_gallery_items(
         db, where=where, include="auto", sort="created_desc", limit=limit
+    )
+
+
+@router.get("/similarity-clusters", response_model=SimilarityClustersResponse)
+async def get_similarity_clusters(
+    class_id: uuid.UUID = Query(...),
+    cluster_size: int = Query(default=8, ge=2, le=32),
+    max_clusters: int = Query(default=40, ge=1, le=200),
+    max_pool: int = Query(default=2000, ge=10, le=10000),
+    db: AsyncSession = Depends(get_db),
+) -> SimilarityClustersResponse:
+    """Group un-reviewed, un-assigned detections of one class by embedding kNN.
+
+    Companion to `predicted-groups`: that view groups by the model's
+    `predicted_subclass_id`; this one ignores predictions entirely and
+    clusters purely on embedding similarity, so it works even when the
+    auto-assigner has nothing to say (no examples yet, low confidence, no
+    sub-classes seeded). Greedy seed-iteration: take the oldest un-clustered
+    detection as a seed, grab its `cluster_size - 1` nearest neighbors from
+    the remaining pool via pgvector HNSW (`ix_detections_*_embedding`), emit
+    one cluster, repeat. No precomputed cluster table — the pool is bounded
+    by `max_pool` and the user refreshes after applying labels to surface
+    the next batch.
+    """
+    pool_rows = (
+        await db.execute(
+            select(
+                DetectionModel.id,
+                DetectionModel.face_embedding,
+                DetectionModel.object_embedding,
+                DetectionModel.bbox,
+                DetectionModel.frame_id,
+                DetectionModel.subclass_id,
+                DetectionModel.source,
+                DetectionModel.reviewed,
+                DetectionModel.reviewed_at,
+                DetectionModel.created_at,
+                Frame.path.label("frame_path"),
+                Frame.clip_id,
+            )
+            .select_from(DetectionModel)
+            .join(Frame, Frame.id == DetectionModel.frame_id)
+            .where(
+                DetectionModel.class_id == class_id,
+                DetectionModel.reviewed.is_(False),
+                DetectionModel.subclass_id.is_(None),
+                DetectionModel.deleted_at.is_(None),
+                Frame.kept.is_(True),
+                (DetectionModel.face_embedding.is_not(None))
+                | (DetectionModel.object_embedding.is_not(None)),
+            )
+            .order_by(DetectionModel.created_at)
+            .limit(max_pool + 1)
+        )
+    ).all()
+
+    pool_truncated = len(pool_rows) > max_pool
+    pool_rows = pool_rows[:max_pool]
+    pool_size = len(pool_rows)
+
+    rows_by_id = {row.id: row for row in pool_rows}
+    face_count = sum(1 for r in pool_rows if r.face_embedding is not None)
+    object_count = sum(1 for r in pool_rows if r.object_embedding is not None)
+    if face_count and object_count:
+        embedding_kind: EmbeddingKind = "mixed"
+    elif face_count:
+        embedding_kind = "face"
+    else:
+        embedding_kind = "object"
+
+    def _to_item(row: Any) -> DetectionGalleryItem:
+        return DetectionGalleryItem(
+            id=row.id,
+            frame_id=row.frame_id,
+            clip_id=row.clip_id,
+            class_id=class_id,
+            subclass_id=row.subclass_id,
+            bbox=Bbox(**row.bbox),
+            image_url=f"/files/frames/{row.frame_path}" if row.frame_path else None,
+            crop_url=crop_url(str(row.id)) if row.frame_path else None,
+            source=row.source,
+            reviewed=row.reviewed,
+            reviewed_at=row.reviewed_at,
+            created_at=row.created_at,
+        )
+
+    # Oldest-first so the seed sequence is stable across requests. As clusters
+    # form, members are removed from the remaining set — subsequent seeds skip
+    # any detection already clustered.
+    remaining: list[uuid.UUID] = [row.id for row in pool_rows]
+    clusters: list[SimilarityCluster] = []
+
+    while remaining and len(clusters) < max_clusters:
+        seed_id = remaining[0]
+        seed_row = rows_by_id[seed_id]
+        # Same dispatch rule as `_assign_subclass_async`: face beats object
+        # when both are present.
+        if seed_row.face_embedding is not None:
+            emb_col = DetectionModel.face_embedding
+            seed_vec = seed_row.face_embedding
+        else:
+            emb_col = DetectionModel.object_embedding
+            seed_vec = seed_row.object_embedding
+
+        distance = emb_col.cosine_distance(seed_vec)
+        neighbor_pool = [d for d in remaining if d != seed_id]
+        member_ids: list[uuid.UUID] = [seed_id]
+        avg_distance = 0.0
+
+        if neighbor_pool and cluster_size > 1:
+            neighbor_rows = (
+                await db.execute(
+                    select(DetectionModel.id, distance.label("d"))
+                    .where(
+                        DetectionModel.id.in_(neighbor_pool),
+                        emb_col.is_not(None),
+                    )
+                    .order_by(distance)
+                    .limit(cluster_size - 1)
+                )
+            ).all()
+            if neighbor_rows:
+                member_ids.extend(nid for nid, _ in neighbor_rows)
+                avg_distance = sum(float(d) for _, d in neighbor_rows) / len(neighbor_rows)
+
+        members = [_to_item(rows_by_id[mid]) for mid in member_ids]
+        clusters.append(
+            SimilarityCluster(
+                seed_id=seed_id,
+                avg_distance=avg_distance,
+                members=members,
+            )
+        )
+        clustered = set(member_ids)
+        remaining = [d for d in remaining if d not in clustered]
+
+    return SimilarityClustersResponse(
+        clusters=clusters,
+        embedding_kind=embedding_kind,
+        pool_size=pool_size,
+        pool_truncated=pool_truncated,
+        remaining=len(remaining),
     )
 
 
@@ -282,9 +431,7 @@ async def bulk_review(
                     from_class_id=det.class_id,
                     to_class_id=data["class_id"] if class_changed else det.class_id,
                     from_subclass_id=det.subclass_id,
-                    to_subclass_id=data["subclass_id"]
-                    if subclass_changed
-                    else det.subclass_id,
+                    to_subclass_id=data["subclass_id"] if subclass_changed else det.subclass_id,
                 )
             )
             audits_written += 1
@@ -298,9 +445,7 @@ async def bulk_review(
             if data["reviewed"] and not det.reviewed:
                 det.reviewed = True
                 det.reviewed_at = now
-                db.add(
-                    make_audit(det, reason="user_review", to_class_id=det.class_id)
-                )
+                db.add(make_audit(det, reason="user_review", to_class_id=det.class_id))
                 audits_written += 1
                 row_changed = True
             elif data["reviewed"] is False and det.reviewed:
@@ -318,14 +463,10 @@ async def bulk_review(
     if affected_frame_ids:
         # One SSE per affected frame so any open `/labeling/:fid` view refreshes.
         clip_rows = await db.execute(
-            select(Frame.id, Frame.clip_id).where(
-                Frame.id.in_(affected_frame_ids)
-            )
+            select(Frame.id, Frame.clip_id).where(Frame.id.in_(affected_frame_ids))
         )
         for frame_id, clip_id in clip_rows:
-            await publish(
-                "frame.updated", clip_id=str(clip_id), frame_id=str(frame_id)
-            )
+            await publish("frame.updated", clip_id=str(clip_id), frame_id=str(frame_id))
     if affected_class_ids:
         await maybe_trigger_training(db, affected_class_ids)
 

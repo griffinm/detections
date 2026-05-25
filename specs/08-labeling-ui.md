@@ -246,11 +246,14 @@ the user labels some.
 The page renders one `<DetectionTileGrid>` per cluster, all sharing the same
 `selectedIds` set so selection composes across clusters. Each cluster has a
 **Select cluster / Deselect cluster** toggle for the common "this whole
-group is one sub-class" case. The toolbar is a `<Select>` of `class`
-sub-classes plus an **Apply** button that calls the same
-`POST /api/labeling/bulk-review` with `{class_id, subclass_id, reviewed:true}` —
-class is passed alongside subclass so the bulk endpoint's class-coercion path
-handles rows whose `class_id` somehow drifted from the filter.
+group is one sub-class" case. The toolbar has two `<Select>`s — a **target
+class** (defaults to the filter class but can be changed when a cluster
+contains crops YOLO mis-classified) and a **target sub-class** scoped to
+the target class (includes a `(no sub-class)` option so the user can
+reassign class only) — plus an **Apply** button that calls
+`POST /api/labeling/bulk-review` with `{class_id, subclass_id?, reviewed:true}`.
+Apply is enabled when either a sub-class is picked or the target class
+differs from the filter class.
 
 ### Unified-apply semantics
 

@@ -32,7 +32,15 @@ export function LabelingSimilarity() {
     clusterSize,
   });
 
-  const { data: subclasses = [] } = useSubclasses(classFilter || undefined);
+  // Target class for the bulk apply — defaults to the filter class but can
+  // diverge when the user wants to fix mis-classified detections (e.g. a
+  // YOLO-tagged "dog" crop that's actually a cat).
+  const [targetClass, setTargetClass] = useState<string>("");
+  useEffect(() => {
+    setTargetClass(classFilter);
+  }, [classFilter]);
+
+  const { data: subclasses = [] } = useSubclasses(targetClass || undefined);
   const activeSubclasses = subclasses.filter((s) => s.is_active);
   const [targetSubclass, setTargetSubclass] = useState<string>("");
   useEffect(() => {
@@ -70,8 +78,13 @@ export function LabelingSimilarity() {
   );
 
   const bulk = useBulkApply();
-  const targetName =
+  const targetSubName =
     activeSubclasses.find((s) => s.id === targetSubclass)?.name ?? "";
+  const targetClassName =
+    activeClasses.find((c) => c.id === targetClass)?.name ?? "";
+  const classReassign = Boolean(targetClass) && targetClass !== classFilter;
+  const canApply =
+    selected.size > 0 && (Boolean(targetSubclass) || classReassign);
 
   const selectCluster = (cluster: SimilarityCluster): void => {
     const next = new Set(selected);
@@ -84,33 +97,30 @@ export function LabelingSimilarity() {
       toast.error("Select at least one detection");
       return;
     }
-    if (!targetSubclass) {
-      toast.error("Pick a sub-class to apply");
+    if (!targetSubclass && !classReassign) {
+      toast.error("Pick a sub-class or a different target class to apply");
       return;
     }
-    bulk.mutate(
-      {
-        detection_ids: [...selected],
-        class_id: classFilter,
-        subclass_id: targetSubclass,
-        reviewed: true,
+    const payload: Parameters<typeof bulk.mutate>[0] = {
+      detection_ids: [...selected],
+      class_id: targetClass || classFilter,
+      reviewed: true,
+    };
+    if (targetSubclass) payload.subclass_id = targetSubclass;
+    bulk.mutate(payload, {
+      onSuccess: (result) => {
+        toast.success(
+          `Applied to ${result.updated} detection${
+            result.updated === 1 ? "" : "s"
+          }${result.skipped ? ` (${result.skipped} skipped)` : ""}`,
+        );
+        setSelected(new Set());
       },
-      {
-        onSuccess: (result) => {
-          toast.success(
-            `Applied to ${result.updated} detection${
-              result.updated === 1 ? "" : "s"
-            }${result.skipped ? ` (${result.skipped} skipped)` : ""}`,
-          );
-          setSelected(new Set());
-        },
-        onError: () => toast.error("Failed to apply"),
-      },
-    );
+      onError: () => toast.error("Failed to apply"),
+    });
   };
 
   const clusters = data?.clusters ?? [];
-  const className = activeClasses.find((c) => c.id === classFilter)?.name;
 
   return (
     <div className="space-y-4">
@@ -186,12 +196,25 @@ export function LabelingSimilarity() {
               >
                 Clear
               </Button>
+              <Select
+                value={targetClass}
+                onChange={(e) => setTargetClass(e.target.value)}
+                className="h-8 text-xs"
+                title="Target class to assign"
+              >
+                {activeClasses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.id === classFilter ? c.name : `→ ${c.name}`}
+                  </option>
+                ))}
+              </Select>
               {activeSubclasses.length > 0 ? (
                 <Select
                   value={targetSubclass}
                   onChange={(e) => setTargetSubclass(e.target.value)}
                   className="h-8 text-xs"
                 >
+                  <option value="">(no sub-class)</option>
                   {activeSubclasses.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -200,17 +223,19 @@ export function LabelingSimilarity() {
                 </Select>
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  No sub-classes for {className ?? "this class"}
+                  No sub-classes for {targetClassName || "this class"}
                 </span>
               )}
               <Button
                 onClick={apply}
-                disabled={
-                  bulk.isPending || selected.size === 0 || !targetSubclass
-                }
+                disabled={bulk.isPending || !canApply}
               >
                 <CheckCircle2 className="h-4 w-4" />
-                {targetName ? `Apply “${targetName}”` : "Apply"}
+                {targetSubName
+                  ? `Apply “${targetSubName}”`
+                  : classReassign
+                    ? `Reassign to “${targetClassName}”`
+                    : "Apply"}
               </Button>
             </div>
           </div>

@@ -260,7 +260,7 @@ app restart:
 |---------------|---------------|
 
 Examples: `frame_fps`, `detection_min_confidence`,
-`custom_class_finetune_threshold`. These shadow the values in `.env`; the
+`subclass_retrain_threshold`. These shadow the values in `.env`; the
 DB takes precedence if present. Surfaced via the `/settings` API.
 
 ### `webhook_deliveries`

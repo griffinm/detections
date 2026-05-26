@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     detect_batch_size: int = 16
 
     # training
-    custom_class_finetune_threshold: int = 100
     subclass_retrain_threshold: int = 25
     yolo_base_model: str = "yolo11l.pt"
     yolo_finetune_epochs: int = 50
@@ -79,7 +78,6 @@ OVERRIDABLE_KEYS: tuple[str, ...] = (
     "subclass_min_confidence",
     "frame_jpeg_quality",
     "detect_batch_size",
-    "custom_class_finetune_threshold",
     "subclass_retrain_threshold",
     "yolo_finetune_epochs",
     "yolo_finetune_imgsz",

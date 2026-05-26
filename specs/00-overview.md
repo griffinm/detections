@@ -100,10 +100,11 @@ submission and spec 04 §Jobs.
 7. **Review**: user opens the labeling UI, confirms / corrects / draws boxes
    and class+subclass labels. The corrections become ground truth and feed
    the audit log.
-8. **Retrain (optional, background)**:
-   - When a custom class accumulates ≥ N labels, queue a YOLO fine-tune.
+8. **Retrain**:
+   - YOLO fine-tunes are manual — the owner kicks them off from `/training`
+     once a custom class has enough labels to be worth it.
    - When a sub-class accumulates ≥ M new labels, retrain the per-class
-     linear-on-embeddings classifier.
+     linear-on-embeddings classifier (background, auto-triggered).
 9. **Cleanup**: original video can be moved to `/data/videos/processed/` (or
    deleted by the user); frames stay until the user purges them.
 10. **Callback** (jobs only): when a clip submitted via `POST /api/jobs`
@@ -153,8 +154,6 @@ submission and spec 04 §Jobs.
 
 - **Discard threshold**: "no objects" = max detection confidence < 0.25 across
   all active classes. Default 0.25; user-tunable.
-- **Custom-class fine-tune threshold**: default 100 labeled examples per
-  custom class.
 - **Sub-class retrain threshold**: default 25 new labeled examples since last
   train.
 - **Frame storage**: JPEG quality 90, original resolution, no downscale.

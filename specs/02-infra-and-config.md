@@ -356,7 +356,6 @@ class Settings(BaseSettings):
     detect_batch_size: int = 16
 
     # training
-    custom_class_finetune_threshold: int = 100
     subclass_retrain_threshold: int = 25
     yolo_base_model: str = "yolo11l.pt"
     insightface_pack: str = "buffalo_l"
@@ -387,7 +386,6 @@ worker. The compose file maps it in via `env_file`.
 | `VD_FRAME_FPS`                     | `1.0`                                  | sampling rate                         |
 | `VD_DETECTION_MIN_CONFIDENCE`      | `0.25`                                 | "no objects" cutoff                   |
 | `VD_SUBCLASS_MIN_CONFIDENCE`       | `0.55`                                 | cosine-sim threshold for kNN          |
-| `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD`| `100`                                 | labels needed to trigger fine-tune    |
 | `VD_DETECT_BATCH_SIZE`             | `16`                                   | frames per `vd.detect_frame_batch` task |
 | `VD_COMPRESS_PROCESSED_VIDEOS`     | `true`                                 | schedule `vd.compress_video` after extract (spec 05) |
 | `VD_COMPRESS_CRF`                  | `22`                                   | NVENC `-cq` target quality            |

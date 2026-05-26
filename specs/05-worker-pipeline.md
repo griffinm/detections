@@ -198,10 +198,11 @@ improvement vs per-frame inference.
 
 ### `vd.finetune_yolo(training_run_id: uuid)`
 - The **API** creates the `training_runs` row (`status='queued'`) and enqueues
-  the task; the task receives the run id. Triggered by:
-  - `POST /training-runs { kind: 'yolo' }`
-  - or automatically when the labeled dataset crosses
-    `custom_class_finetune_threshold` (see `services/training_service.py`).
+  the task; the task receives the run id. Triggered manually by the owner via
+  `POST /training-runs { kind: 'yolo' }` (the `/training` page). YOLO
+  fine-tunes are never enqueued automatically; the labeling write paths only
+  auto-trigger per-class classifier retrains (see
+  `services/training_service.py`).
 - Steps:
   1. Mark the run `running`; resolve the active YOLO checkpoint as the base.
   2. Build the YOLO dataset (`worker/dataset.py`): every ground-truth
@@ -478,7 +479,6 @@ Failure handling:
 - `VD_FRAME_FPS` — sample rate (default 1.0).
 - `VD_DETECTION_MIN_CONFIDENCE` — discard threshold (default 0.25).
 - `VD_SUBCLASS_MIN_CONFIDENCE` — sub-class cosine threshold (default 0.55).
-- `VD_CUSTOM_CLASS_FINETUNE_THRESHOLD` — labels needed (default 100).
 - `VD_SUBCLASS_RETRAIN_THRESHOLD` — labels needed (default 25).
 - `VD_DELETE_PROCESSED_VIDEOS` — bool (default false).
 - `VD_COMPRESS_PROCESSED_VIDEOS` — bool (default true). When set, the extract

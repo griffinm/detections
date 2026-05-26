@@ -91,9 +91,9 @@ Take majority vote among the top 5; tie-break by mean cosine sim.
 [user] labels frames containing deer via the bbox UI
        (frames that may not have any current detections — they draw new boxes)
    ↓
-[system] counts labeled deer detections (source='user' OR reviewed=true,
-         class=deer). When count ≥ VD_CUSTOM_CLASS_FINETUNE_THRESHOLD,
-         enqueue vd.finetune_yolo unless one is already running/queued.
+[user] kicks off a fine-tune from `/training` (or
+       POST /api/training-runs {"kind": "yolo"}). YOLO fine-tunes are
+       manual-only — the system never enqueues vd.finetune_yolo on its own.
    ↓
 [worker] builds dataset including BOTH:
          - newly labeled deer detections

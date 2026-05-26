@@ -24,7 +24,6 @@ const SECTIONS: { title: string; keys: string[] }[] = [
   {
     title: "Training",
     keys: [
-      "custom_class_finetune_threshold",
       "subclass_retrain_threshold",
       "yolo_finetune_epochs",
       "yolo_finetune_imgsz",
@@ -49,7 +48,6 @@ const DESCRIPTIONS: Record<string, string> = {
   subclass_min_confidence: "kNN / classifier confidence to assign a sub-class.",
   frame_jpeg_quality: "Extracted-frame JPEG quality (0–100).",
   detect_batch_size: "Frames per GPU detection batch.",
-  custom_class_finetune_threshold: "New labels that trigger a YOLO fine-tune.",
   subclass_retrain_threshold: "New labels that trigger a classifier retrain.",
   yolo_finetune_epochs: "Epochs per fine-tune run.",
   yolo_finetune_imgsz: "Training image size (px).",

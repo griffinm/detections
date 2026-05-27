@@ -99,9 +99,12 @@ async def build_yolo_dataset(
     rows = (
         await session.execute(
             select(
+                DetectionModel.id,
                 DetectionModel.frame_id,
                 DetectionModel.class_id,
                 DetectionModel.bbox,
+                DetectionModel.track_id,
+                DetectionModel.confidence_class,
                 Frame.path,
             )
             .join(Frame, Frame.id == DetectionModel.frame_id)
@@ -114,11 +117,34 @@ async def build_yolo_dataset(
         )
     ).all()
 
+    # Track-aware dedup: a 30-frame walk-through of one object would otherwise
+    # emit 30 near-identical YOLO labels and bias the loss. Per
+    # `(track_id, class_id)`, keep only the highest-confidence detection
+    # (stable tie-break by id). Loose detections (`track_id IS NULL`) are
+    # kept verbatim — they're user-drawn or pre-Phase-9 and not part of any
+    # over-represented track.
+    chosen_per_track: dict[tuple[uuid.UUID, uuid.UUID], tuple[uuid.UUID, float]] = {}
+    for det_id, _frame_id, class_id, _bbox, track_id, conf, _path in rows:
+        if track_id is None:
+            continue
+        key = (track_id, class_id)
+        score = float(conf) if conf is not None else 0.0
+        best = chosen_per_track.get(key)
+        if (
+            best is None
+            or score > best[1]
+            or (score == best[1] and det_id < best[0])
+        ):
+            chosen_per_track[key] = (det_id, score)
+    kept_track_det_ids = {rep[0] for rep in chosen_per_track.values()}
+
     # Group label lines per frame, dropping frames whose JPEG has been pruned.
     labels_by_frame: dict[uuid.UUID, list[str]] = {}
     frame_path: dict[uuid.UUID, str] = {}
     missing: set[uuid.UUID] = set()
-    for frame_id, class_id, bbox, path in rows:
+    for det_id, frame_id, class_id, bbox, track_id, _conf, path in rows:
+        if track_id is not None and det_id not in kept_track_det_ids:
+            continue  # collapsed into the chosen rep for this (track, class)
         idx = class_index.get(class_id)
         if idx is None:  # detection of an inactive class — skip
             continue

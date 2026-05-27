@@ -19,6 +19,7 @@ import {
   useCalibration,
   usePerClassMetrics,
   useRecentChanges,
+  useTracksAccuracy,
   type AccuracyPoint,
 } from "@/hooks/useMetrics";
 
@@ -127,6 +128,82 @@ function AccuracySection() {
     </Card>
   );
 }
+
+function TrackAccuracySection() {
+  const [bucket, setBucket] = useState<"day" | "week">("day");
+  const { data: points = [], isPending } = useTracksAccuracy(bucket);
+  const { data: models = [] } = useModels();
+
+  const modelName = (id: string): string => {
+    if (id === "unknown") return "user / unversioned";
+    return models.find((m) => m.id === id)?.name ?? `${id.slice(0, 8)}…`;
+  };
+
+  const { rows, seriesIds } = pivotAccuracy(points);
+
+  return (
+    <Card
+      title="Track top-1 class accuracy"
+      actions={
+        <div className="flex gap-1">
+          {(["day", "week"] as const).map((option) => (
+            <button
+              key={option}
+              onClick={() => setBucket(option)}
+              className={cn(
+                "rounded px-2 py-0.5 text-xs",
+                bucket === option
+                  ? "bg-accent"
+                  : "text-muted-foreground hover:bg-muted",
+              )}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      {isPending ? (
+        <div className="h-64 animate-pulse rounded bg-muted" />
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No reviewed tracks yet. Review a track on{" "}
+          <Link to="/labeling/tracks" className="underline">
+            /labeling/tracks
+          </Link>{" "}
+          to populate this chart.
+        </p>
+      ) : (
+        <ResponsiveContainer width="100%" height={256}>
+          <LineChart data={rows} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+            <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+            <YAxis
+              domain={[0, 1]}
+              tickFormatter={pct}
+              tick={{ fontSize: 11 }}
+              width={48}
+            />
+            <Tooltip formatter={(value: number) => pct(value)} />
+            {seriesIds.map((id, i) => (
+              <Line
+                key={id}
+                type="monotone"
+                dataKey={id}
+                name={modelName(id)}
+                stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+                strokeWidth={2}
+                connectNulls
+                dot={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </Card>
+  );
+}
+
 
 function PerClassSection() {
   const { data: metrics = [], isPending } = usePerClassMetrics();
@@ -296,6 +373,7 @@ export function MetricsPage() {
         description="Detection accuracy over time, per class, per model version."
       />
       <AccuracySection />
+      <TrackAccuracySection />
       <div className="grid gap-4 lg:grid-cols-2">
         <PerClassSection />
         <CalibrationSection />

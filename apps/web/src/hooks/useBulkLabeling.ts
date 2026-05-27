@@ -199,3 +199,195 @@ export function useBulkApply() {
     },
   });
 }
+
+export interface TrackRead {
+  id: string;
+  clip_id: string;
+  class_id: string | null;
+  subclass_id: string | null;
+  predicted_class_id: string | null;
+  predicted_subclass_id: string | null;
+  confidence_class: number | null;
+  confidence_subclass: number | null;
+  n_detections: number;
+  first_frame_index: number;
+  last_frame_index: number;
+  source: "tracker" | "user";
+  model_version_id: string | null;
+  reviewed: boolean;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrackMember {
+  id: string;
+  frame_id: string;
+  frame_index: number;
+  bbox: { x: number; y: number; w: number; h: number };
+  class_id: string | null;
+  subclass_id: string | null;
+  confidence_class: number | null;
+  confidence_subclass: number | null;
+  source: "model" | "user";
+  reviewed: boolean;
+}
+
+export interface TrackDetail {
+  track: TrackRead;
+  members: TrackMember[];
+}
+
+export interface BulkReviewTracksPayload {
+  track_ids: string[];
+  class_id?: string | null;
+  subclass_id?: string | null;
+  reviewed?: boolean;
+}
+
+export interface BulkReviewTracksResult {
+  updated_tracks: number;
+  updated_detections: number;
+  skipped_tracks: number;
+  audits_written: number;
+  affected_frame_ids: string[];
+  affected_track_ids: string[];
+}
+
+export function useClipTracks(clipId: string | undefined) {
+  return useQuery<TrackRead[]>({
+    queryKey: ["clip-tracks", clipId ?? null],
+    queryFn: async () => {
+      const res = await fetch(`/api/clips/${clipId}/tracks`);
+      if (!res.ok) throw new Error("Failed to fetch clip tracks");
+      return res.json() as Promise<TrackRead[]>;
+    },
+    enabled: Boolean(clipId),
+    staleTime: 5_000,
+  });
+}
+
+export function useTrack(trackId: string | undefined) {
+  return useQuery<TrackDetail>({
+    queryKey: ["tracks", trackId ?? null],
+    queryFn: async () => {
+      const res = await fetch(`/api/tracks/${trackId}`);
+      if (!res.ok) throw new Error("Failed to fetch track");
+      return res.json() as Promise<TrackDetail>;
+    },
+    enabled: Boolean(trackId),
+    staleTime: 5_000,
+  });
+}
+
+function _invalidateTrackCaches(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["clip-tracks"] });
+  qc.invalidateQueries({ queryKey: ["tracks"] });
+  qc.invalidateQueries({ queryKey: ["clip-detections"] });
+  qc.invalidateQueries({ queryKey: ["clip-class-summary"] });
+  qc.invalidateQueries({ queryKey: ["labeling-queue"] });
+  qc.invalidateQueries({ queryKey: ["metrics"] });
+}
+
+export function useTrackPatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      trackId: string;
+      patch: { class_id?: string | null; subclass_id?: string | null; reviewed?: boolean };
+    }) => {
+      const res = await fetch(`/api/tracks/${args.trackId}`, {
+        method: "PATCH",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(args.patch),
+      });
+      if (!res.ok) throw new Error("Failed to update track");
+      return res.json() as Promise<{
+        track: TrackRead;
+        updated_detections: number;
+        audits_written: number;
+        affected_frame_ids: string[];
+      }>;
+    },
+    onSuccess: (result) => {
+      _invalidateTrackCaches(qc);
+      for (const fid of result.affected_frame_ids) {
+        qc.invalidateQueries({ queryKey: ["frames", fid] });
+      }
+    },
+  });
+}
+
+export function useTrackSplit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { trackId: string; pivot_frame_index: number }) => {
+      const res = await fetch(`/api/tracks/${args.trackId}/split`, {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ pivot_frame_index: args.pivot_frame_index }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail ?? "Split failed");
+      }
+      return res.json() as Promise<TrackDetail>;
+    },
+    onSuccess: () => _invalidateTrackCaches(qc),
+  });
+}
+
+export function useTrackMerge() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { trackId: string; other_track_id: string }) => {
+      const res = await fetch(`/api/tracks/${args.trackId}/merge`, {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ other_track_id: args.other_track_id }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail ?? "Merge failed");
+      }
+      return res.json() as Promise<TrackDetail>;
+    },
+    onSuccess: () => _invalidateTrackCaches(qc),
+  });
+}
+
+export function useTrackDelete() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (trackId: string) => {
+      const res = await fetch(`/api/tracks/${trackId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete track");
+    },
+    onSuccess: () => _invalidateTrackCaches(qc),
+  });
+}
+
+export function useBulkApplyTracks() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      payload: BulkReviewTracksPayload,
+    ): Promise<BulkReviewTracksResult> => {
+      const res = await fetch("/api/labeling/bulk-review-tracks", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        throw Object.assign(new Error("Bulk apply failed"), { status: res.status });
+      }
+      return res.json() as Promise<BulkReviewTracksResult>;
+    },
+    onSuccess: (result) => {
+      _invalidateTrackCaches(qc);
+      for (const fid of result.affected_frame_ids) {
+        qc.invalidateQueries({ queryKey: ["frames", fid] });
+      }
+    },
+  });
+}

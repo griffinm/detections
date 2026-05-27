@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from vd_db.models import Class, Clip, DetectionAudit, DetectionModel, Frame
+from vd_db.models import Class, Clip, DetectionAudit, DetectionModel, Frame, Track
 from worker.tasks import reextract as reextract_mod
 from worker.tasks.reextract import _reextract_frames_async
 
@@ -36,10 +36,17 @@ async def _seed(session, frames_dir, tmp_path):  # type: ignore[no-untyped-def]
     await session.flush()
 
     person = await session.scalar(select(Class.id).where(Class.name == "person"))
+    track = Track(
+        clip_id=clip.id, class_id=person, predicted_class_id=person,
+        source="tracker", first_frame_index=0, last_frame_index=0,
+        n_detections=1, confidence_class=0.5,
+    )
+    session.add(track)
+    await session.flush()
     det = DetectionModel(
         frame_id=frame.id, class_id=person, predicted_class_id=person,
         bbox={"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}, source="model",
-        confidence_class=0.5,
+        confidence_class=0.5, track_id=track.id,
     )
     session.add(det)
     await session.flush()
@@ -47,7 +54,7 @@ async def _seed(session, frames_dir, tmp_path):  # type: ignore[no-untyped-def]
         detection_id=det.id, reason="initial_prediction", to_class_id=person,
     ))
     await session.commit()
-    return clip, clip_dir, video, frame, det
+    return clip, clip_dir, video, frame, det, track
 
 
 async def test_reextract_wipes_frames_and_enqueues_extract(  # type: ignore[no-untyped-def]
@@ -63,14 +70,16 @@ async def test_reextract_wipes_frames_and_enqueues_extract(  # type: ignore[no-u
 
     monkeypatch.setattr(reextract_mod, "celery_app", _FakeCelery())
 
-    clip, clip_dir, video, frame, det = await _seed(session, frames_dir, tmp_path)
+    clip, clip_dir, video, frame, det, track = await _seed(session, frames_dir, tmp_path)
 
     assert await _reextract_frames_async(str(clip.id)) is True
 
-    # Frame + detection + audit all gone via CASCADE.
+    # Frame + detection + audit all gone via CASCADE; track wiped by the
+    # explicit DELETE since it's not FK'd through frames.
     session.expunge_all()
     assert await session.get(Frame, frame.id) is None
     assert await session.get(DetectionModel, det.id) is None
+    assert await session.get(Track, track.id) is None
     audits = list(await session.scalars(
         select(DetectionAudit).where(DetectionAudit.detection_id == det.id)
     ))
@@ -97,7 +106,7 @@ async def test_reextract_marks_failed_when_source_missing(  # type: ignore[no-un
     the clip failed instead of silently wiping its frames."""
     monkeypatch.setattr(reextract_mod, "publish", _noop)
 
-    clip, clip_dir, video, frame, _ = await _seed(session, frames_dir, tmp_path)
+    clip, clip_dir, video, frame, _, _ = await _seed(session, frames_dir, tmp_path)
     Path(video).unlink()
 
     assert await _reextract_frames_async(str(clip.id)) is False

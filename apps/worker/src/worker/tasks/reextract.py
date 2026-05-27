@@ -19,7 +19,7 @@ from pathlib import Path
 
 from sqlalchemy import delete
 from vd_db import load_effective_settings
-from vd_db.models import Clip, Frame
+from vd_db.models import Clip, Frame, Track
 from vd_tasks.app import celery_app
 
 from worker.db import db_session
@@ -46,6 +46,9 @@ async def _reextract_frames_async(clip_id: str) -> bool:
         frames_dir = settings.frames_dir / clip_id
         # Drop Frame rows first — CASCADE wipes detections, audits, examples.
         await session.execute(delete(Frame).where(Frame.clip_id == cid))
+        # Tracks are per-clip and not FK'd through frames; wipe them too so
+        # the re-extract produces a fresh tracker run.
+        await session.execute(delete(Track).where(Track.clip_id == cid))
         clip.status = "extracting"
         clip.processed_at = None
         clip.error = None

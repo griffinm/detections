@@ -10,6 +10,8 @@ from .models import (
     SettingsKV,
     Subclass,
     SubclassExample,
+    Track,
+    TrackAudit,
     TrainingRun,
     WebhookDelivery,
 )
@@ -20,6 +22,8 @@ from .runtime_settings import (
     load_effective_settings,
     set_override,
 )
+from .subclass_knn import knn_subclass
+from .track_helpers import recount_clip_tracks
 
 __all__ = [
     "Base",
@@ -32,12 +36,16 @@ __all__ = [
     "SettingsKV",
     "Subclass",
     "SubclassExample",
+    "Track",
+    "TrackAudit",
     "TrainingRun",
     "WebhookDelivery",
     "activate_model_version",
     "build_job_result",
     "clear_override",
     "get_overrides",
+    "knn_subclass",
     "load_effective_settings",
+    "recount_clip_tracks",
     "set_override",
 ]

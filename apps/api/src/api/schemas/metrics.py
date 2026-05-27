@@ -49,6 +49,24 @@ class MetricsSummary(BaseModel):
     last7d_class_accuracy: float | None
 
 
+class TrackAccuracyPoint(BaseModel):
+    """One (period, model_version) cell of the track-level accuracy series.
+
+    A track "counts" once it's been reviewed by the user (`tracks.reviewed`).
+    Class top-1 = `predicted_class_id` matches the current `class_id`;
+    sub-class top-1 = same for `predicted_subclass_id` / `subclass_id`.
+    Sub-class accuracy is null when no track in this cell had a sub-class
+    prediction yet.
+    """
+
+    period: datetime
+    model_version_id: uuid.UUID | None
+    n_reviewed: int
+    class_top1: float
+    subclass_top1: float | None
+    mean_confidence: float | None
+
+
 class ReassignmentItem(BaseModel):
     """One row of the 'what changed' panel — a class/sub-class correction."""
 

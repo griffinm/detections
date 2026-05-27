@@ -3,13 +3,22 @@ import os
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from ..deps import enqueue, get_redis, settings
+from ..deps import enqueue, get_db, get_redis, settings
 from ..schemas.metrics import HealthResponse
-from ..schemas.system import DirUsage, DiskUsageResponse, PurgeRequest, PurgeResponse
+from ..schemas.system import (
+    DirUsage,
+    DiskUsageResponse,
+    PurgeRequest,
+    PurgeResponse,
+    TracksBackfillRequest,
+    TracksBackfillResponse,
+    TracksBackfillStatus,
+)
+from vd_db.models import Clip, DetectionModel, Frame, Track
 
 router = APIRouter(tags=["system"])
 
@@ -89,3 +98,32 @@ async def disk_usage() -> DiskUsageResponse:
 async def purge_frames(body: PurgeRequest) -> PurgeResponse:
     enqueue("vd.purge_frames", body.older_than_days, queue="cpu")
     return PurgeResponse(enqueued=True, older_than_days=body.older_than_days)
+
+
+@router.get("/system/backfill-tracks", response_model=TracksBackfillStatus)
+async def backfill_tracks_status(
+    db: AsyncSession = Depends(get_db),
+) -> TracksBackfillStatus:
+    """How many clips have detections but no tracks (Phase-9 backfill backlog)."""
+    detected = (
+        select(Frame.clip_id)
+        .join(DetectionModel, DetectionModel.frame_id == Frame.id)
+        .where(DetectionModel.deleted_at.is_(None))
+        .distinct()
+    )
+    tracked = select(Track.clip_id).where(Track.deleted_at.is_(None)).distinct()
+    eligible = await db.scalar(
+        select(func.count())
+        .select_from(Clip)
+        .where(Clip.id.in_(detected), Clip.id.notin_(tracked))
+    )
+    return TracksBackfillStatus(eligible_clips=int(eligible or 0))
+
+
+@router.post(
+    "/system/backfill-tracks", response_model=TracksBackfillResponse, status_code=202
+)
+async def backfill_tracks_sweep(body: TracksBackfillRequest) -> TracksBackfillResponse:
+    """Sweep up to `limit` pre-Phase-9 clips into the tracking pipeline."""
+    enqueue("vd.backfill_tracks", None, body.limit, queue="cpu")
+    return TracksBackfillResponse(enqueued=True, limit=body.limit)

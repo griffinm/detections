@@ -52,6 +52,7 @@ def _no_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("api.routers.frames.publish", _noop)
     monkeypatch.setattr("api.routers.labeling.publish", _noop)
     monkeypatch.setattr("api.routers.models.publish", _noop)
+    monkeypatch.setattr("api.routers.tracks.publish", _noop)
     monkeypatch.setattr("api.routers.classes.enqueue", _noop_sync)
     monkeypatch.setattr("api.routers.clips.enqueue", _noop_sync)
     monkeypatch.setattr("api.routers.jobs.enqueue", _noop_sync)

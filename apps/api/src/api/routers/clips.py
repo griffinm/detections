@@ -17,8 +17,9 @@ from api.schemas.clip import (
 from api.schemas.common import Paginated
 from api.schemas.detection import DetectionGalleryItem
 from api.schemas.frame import FrameRead
+from api.schemas.tracks import TrackRead
 from api.services.gallery import GalleryInclude, query_gallery_items
-from vd_db.models import Class, Clip, DetectionModel, Frame, Subclass
+from vd_db.models import Class, Clip, DetectionModel, Frame, Subclass, Track
 
 router = APIRouter(prefix="/clips", tags=["clips"])
 
@@ -215,6 +216,20 @@ async def delete_clip(
     return {"enqueued": True, "clip_id": str(clip_id)}
 
 
+@router.post("/{clip_id}/backfill-tracks", status_code=202)
+async def backfill_clip_tracks(
+    clip_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    """Re-track a single pre-Phase-9 clip. Idempotent — the task skips a clip
+    that already has any live track."""
+    clip = await db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    enqueue("vd.backfill_tracks", str(clip_id), 1, queue="cpu")
+    return {"enqueued": True}
+
+
 @router.post("/{clip_id}/reextract", status_code=202)
 async def reextract_clip(
     clip_id: uuid.UUID,
@@ -259,6 +274,24 @@ async def list_frames(
         )
         for f in rows
     ]
+
+
+@router.get("/{clip_id}/tracks", response_model=list[TrackRead])
+async def list_clip_tracks(
+    clip_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[TrackRead]:
+    """Every live track for this clip, ordered by first appearance."""
+    clip = await db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    rows = await db.scalars(
+        select(Track)
+        .where(Track.clip_id == clip_id, Track.deleted_at.is_(None))
+        .order_by(Track.first_frame_index)
+    )
+    return [TrackRead.model_validate(t) for t in rows]
 
 
 @router.get("/{clip_id}/detections", response_model=list[DetectionGalleryItem])

@@ -32,9 +32,9 @@ The same `environment:` blocks **must** also override every `VD_*_DIR` path.
 `.env` is shared with host-run dev processes, so it carries host-absolute
 paths (`/home/.../data/frames`); inside the containers those directories are
 bind-mounted at `/data/...`. A worker that inherits the host path resolves
-frames/models to a non-existent directory — and `vd.detect_frame_batch`
-silently treats a missing JPEG as an object-free frame, so the mismatch
-surfaces as clips that "process" with zero detections, not as an error.
+frames/models to a non-existent directory — and `vd.detect_and_track_clip`
+raises loudly on the first missing JPEG so the mismatch surfaces as a
+worker failure rather than as clips that "process" with zero detections.
 
 ```yaml
 # docker/docker-compose.yml (abridged)
@@ -386,7 +386,8 @@ worker. The compose file maps it in via `env_file`.
 | `VD_FRAME_FPS`                     | `1.0`                                  | sampling rate                         |
 | `VD_DETECTION_MIN_CONFIDENCE`      | `0.25`                                 | "no objects" cutoff                   |
 | `VD_SUBCLASS_MIN_CONFIDENCE`       | `0.55`                                 | cosine-sim threshold for kNN          |
-| `VD_DETECT_BATCH_SIZE`             | `16`                                   | frames per `vd.detect_frame_batch` task |
+| `VD_DETECT_BATCH_SIZE`             | `16`                                   | unused since Phase 9 (was frames per `vd.detect_frame_batch`); reserved |
+| `VD_TRACKER`                       | `botsort.yaml`                         | Ultralytics tracker config for `vd.detect_and_track_clip` (built-in name or absolute path) |
 | `VD_COMPRESS_PROCESSED_VIDEOS`     | `true`                                 | schedule `vd.compress_video` after extract (spec 05) |
 | `VD_COMPRESS_CRF`                  | `22`                                   | NVENC `-cq` target quality            |
 | `VD_PRUNE_SIMILAR_FRAMES`          | `true`                                 | enable `vd.dedup_clip_frames` (spec 05) |

@@ -67,6 +67,31 @@ class BulkReviewResponse(BaseModel):
     affected_frame_ids: list[uuid.UUID]
 
 
+class BulkReviewTracksRequest(BaseModel):
+    """Bulk-apply a class/subclass/reviewed change to every detection across
+    each named track. Mirrors `BulkReviewRequest` keyed on tracks."""
+
+    track_ids: list[uuid.UUID] = Field(min_length=1, max_length=2000)
+    class_id: uuid.UUID | None = None
+    subclass_id: uuid.UUID | None = None
+    reviewed: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> "BulkReviewTracksRequest":
+        if not (self.model_fields_set & {"class_id", "subclass_id", "reviewed"}):
+            raise ValueError("Provide at least one of class_id, subclass_id, reviewed")
+        return self
+
+
+class BulkReviewTracksResponse(BaseModel):
+    updated_tracks: int
+    updated_detections: int
+    skipped_tracks: int
+    audits_written: int
+    affected_frame_ids: list[uuid.UUID]
+    affected_track_ids: list[uuid.UUID]
+
+
 class SimilarityCluster(BaseModel):
     """One greedy-kNN cluster of similar un-reviewed detections.
 

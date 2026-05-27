@@ -8,6 +8,9 @@ interface SseEvent {
   frame_id?: string;
   frame_count?: number;
   training_run_id?: string;
+  track_id?: string;
+  new_track_id?: string;
+  absorbed_track_id?: string;
 }
 
 export function useLiveEvents() {
@@ -81,6 +84,36 @@ export function useLiveEvents() {
           case "model.active_changed":
             void qc.invalidateQueries({ queryKey: ["models"] });
             void qc.invalidateQueries({ queryKey: ["classes"] });
+            void qc.invalidateQueries({ queryKey: ["metrics"] });
+            break;
+          case "clip.tracks_updated":
+            // Stage A worker publishes this when a track-level vote changes;
+            // Stage B uses it as the catch-all "tracks in this clip moved" hint.
+            if (e.clip_id) {
+              void qc.invalidateQueries({ queryKey: ["clip-tracks", e.clip_id] });
+            }
+            void qc.invalidateQueries({ queryKey: ["tracks"] });
+            void qc.invalidateQueries({ queryKey: ["metrics"] });
+            break;
+          case "track.updated":
+          case "track.split":
+          case "track.merged":
+          case "track.deleted":
+            if (e.clip_id) {
+              void qc.invalidateQueries({ queryKey: ["clip-tracks", e.clip_id] });
+            }
+            void qc.invalidateQueries({ queryKey: ["tracks"] });
+            if (e.track_id) {
+              void qc.invalidateQueries({ queryKey: ["tracks", e.track_id] });
+            }
+            if (e.new_track_id) {
+              void qc.invalidateQueries({ queryKey: ["tracks", e.new_track_id] });
+            }
+            if (e.absorbed_track_id) {
+              void qc.invalidateQueries({
+                queryKey: ["tracks", e.absorbed_track_id],
+              });
+            }
             void qc.invalidateQueries({ queryKey: ["metrics"] });
             break;
         }

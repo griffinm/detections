@@ -29,6 +29,25 @@ zero training cost but is noisy at the boundaries and slow at scale. A
 small logistic regression on the same embeddings is faster, calibrated,
 and trivially retrainable.
 
+## Tracking
+
+YOLO's per-frame boxes are linked into per-clip *tracks* by BoT-SORT (the
+Ultralytics-bundled tracker, configurable via `VD_TRACKER`). At 1 fps
+motion-only association is fragile — objects move far between frames — so
+BoT-SORT's appearance re-id is essential; ByteTrack works as a faster
+fallback when re-id features are unhelpful.
+
+Track-level recognition. Sub-class assignment runs once per track via
+`vd.assign_track_subclass`: each member detection contributes a per-detection
+(subclass_id, confidence) (kNN against `subclass_examples`, or the active
+per-class classifier in Regime B). The track winner is the majority sub-class
+across those votes; ties break on mean cosine similarity, and the reported
+`confidence_subclass` is the mean of the winning bucket's votes. This is
+more robust than per-detection kNN because a single hard crop in the middle
+of a 30-frame track can't drag the whole track's identity around. When a
+track's vote clears `subclass_min_confidence`, the winner is propagated to
+every unreviewed model-source member detection.
+
 ## Detection pipeline (model side of spec 05)
 
 ```
@@ -129,6 +148,15 @@ Catastrophic forgetting guard:
   A blocked model is registered but left inactive; the owner can still
   activate it manually from `/models`.
 
+**Track-aware dataset dedup.** Once tracks exist (Phase 9 Stage B), the
+dataset builder collapses near-identical track members to one detection per
+`(track_id, class_id)` — highest `confidence_class` wins, stable tie-break
+by detection id — so a 30-frame walk-through of one dog doesn't emit 30
+near-identical YOLO labels biasing the loss. Loose detections (`track_id
+IS NULL`, user-drawn or pre-Phase-9) always survive verbatim. A frame is
+kept whenever any surviving detection lands on it; frames whose detections
+all got deduped are dropped.
+
 Dataset layout (Ultralytics standard):
 ```
 training/run_<id>/
@@ -223,7 +251,7 @@ If calibration is bad (ECE > 0.05), the UI flags it and suggests a
 calibration retrain — fit a Platt scaling (or isotonic) wrapper on top of
 the YOLO scores using the reviewed set, store as `model_versions` of
 kind `classifier` with `target_class_id=NULL` and `name='yolo-cal-v1'`.
-Application is a post-processing step in `detect_frame_batch`.
+Application is a post-processing step in `detect_and_track_clip`.
 
 ## Model registry behavior
 
@@ -231,7 +259,7 @@ Application is a post-processing step in `detect_frame_batch`.
   classifier kind) may have `is_active=true`. Enforced in-app by the single
   activation transaction in `vd_db.activate_model_version` (shared by the API
   and the worker) — not a DB constraint.
-- No model-change pub/sub listener is needed: `detect_frame_batch` re-resolves
+- No model-change pub/sub listener is needed: `detect_and_track_clip` re-resolves
   the active `model_versions` row at the start of every batch, and `load_yolo`
   is an LRU cache keyed by weights path, so a newly activated model is picked
   up on the next batch (and rollback is instant — the old model stays cached).
@@ -256,6 +284,6 @@ On a single RTX 4070 / 4080-class GPU:
   the classifier as negatives. Store rejection events in `detection_audits`
   and consume them at retrain time.
 - **GPU eviction during training**: when `vd.finetune_yolo` runs, it can
-  starve `vd.detect_frame_batch`. We could either (a) hard-pause inference
+  starve `vd.detect_and_track_clip`. We could either (a) hard-pause inference
   during training (simple), or (b) share VRAM with cooperative scheduling
   (complex). Default to (a) for v1.

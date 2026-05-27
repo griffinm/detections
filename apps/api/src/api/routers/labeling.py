@@ -21,6 +21,8 @@ from api.schemas.detection import Bbox, DetectionGalleryItem
 from api.schemas.labeling import (
     BulkReviewRequest,
     BulkReviewResponse,
+    BulkReviewTracksRequest,
+    BulkReviewTracksResponse,
     ConfidenceBucket,
     EmbeddingKind,
     LabelingQueueItem,
@@ -32,9 +34,10 @@ from api.services.audits import make_audit
 from api.services.crops import crop_url
 from api.services.events import publish
 from api.services.gallery import query_gallery_items
+from api.services.tracks_service import apply_track_update
 from api.services.training_service import maybe_trigger_training
 from vd_db import load_effective_settings
-from vd_db.models import Class, Clip, DetectionModel, Frame, Subclass
+from vd_db.models import Class, Clip, DetectionModel, Frame, Subclass, Track
 
 router = APIRouter(prefix="/labeling", tags=["labeling"])
 
@@ -475,4 +478,100 @@ async def bulk_review(
         skipped=len(payload.detection_ids) - updated,
         audits_written=audits_written,
         affected_frame_ids=list(affected_frame_ids),
+    )
+
+
+@router.post("/bulk-review-tracks", response_model=BulkReviewTracksResponse)
+async def bulk_review_tracks(
+    payload: BulkReviewTracksRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BulkReviewTracksResponse:
+    """Apply class/subclass/review changes to every detection across each
+    named track. Mirrors `/bulk-review` but the unit of work is a track —
+    one Apply per N detections."""
+    data = payload.model_dump(exclude_unset=True)
+    fields_set = set(data) & {"class_id", "subclass_id", "reviewed"}
+
+    target_subclass: Subclass | None = None
+    if "subclass_id" in data and data["subclass_id"] is not None:
+        target_subclass = await db.get(Subclass, data["subclass_id"])
+        if target_subclass is None:
+            raise HTTPException(status_code=404, detail="Sub-class not found")
+        if "class_id" in data and data["class_id"] not in (
+            None,
+            target_subclass.class_id,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Sub-class belongs to a different class than class_id",
+            )
+
+    tracks = list(
+        await db.scalars(
+            select(Track).where(
+                Track.id.in_(payload.track_ids), Track.deleted_at.is_(None)
+            )
+        )
+    )
+
+    updated_tracks = 0
+    updated_detections = 0
+    audits_written = 0
+    affected_frame_ids: set[uuid.UUID] = set()
+    affected_track_ids: list[uuid.UUID] = []
+    affected_class_ids: set[uuid.UUID | None] = set()
+
+    for track in tracks:
+        # Same sub-class/class consistency guard as bulk-review: a sub-class
+        # bound to a different class without an overriding class_id would
+        # produce an inconsistent track row — skip it.
+        if (
+            target_subclass is not None
+            and "class_id" not in data
+            and track.class_id != target_subclass.class_id
+        ):
+            continue
+
+        result = await apply_track_update(
+            db,
+            track,
+            class_id=data.get("class_id"),
+            subclass_id=data.get("subclass_id"),
+            reviewed=data.get("reviewed"),
+            fields_set=fields_set,
+        )
+        if result.track_changed:
+            updated_tracks += 1
+            affected_track_ids.append(track.id)
+            audits_written += 1  # the TrackAudit row itself
+        updated_detections += len(result.affected_detection_ids)
+        audits_written += len(result.affected_detection_ids)
+        affected_frame_ids.update(result.affected_frame_ids)
+        affected_class_ids.update(result.affected_class_ids)
+
+    await db.commit()
+
+    if affected_frame_ids:
+        clip_rows = await db.execute(
+            select(Frame.id, Frame.clip_id).where(Frame.id.in_(affected_frame_ids))
+        )
+        for frame_id, clip_id in clip_rows:
+            await publish(
+                "frame.updated", clip_id=str(clip_id), frame_id=str(frame_id)
+            )
+    for tid in affected_track_ids:
+        track = next(t for t in tracks if t.id == tid)
+        await publish(
+            "track.updated", clip_id=str(track.clip_id), track_id=str(tid)
+        )
+    if affected_class_ids:
+        await maybe_trigger_training(db, affected_class_ids)
+
+    return BulkReviewTracksResponse(
+        updated_tracks=updated_tracks,
+        updated_detections=updated_detections,
+        skipped_tracks=len(payload.track_ids) - updated_tracks,
+        audits_written=audits_written,
+        affected_frame_ids=list(affected_frame_ids),
+        affected_track_ids=affected_track_ids,
     )

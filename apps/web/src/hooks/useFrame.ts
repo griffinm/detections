@@ -22,6 +22,7 @@ export interface Detection {
   predicted_class_id: string | null;
   predicted_subclass_id: string | null;
   model_version_id: string | null;
+  track_id: string | null;
   created_at: string;
   updated_at: string;
 }

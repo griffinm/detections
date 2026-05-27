@@ -10,6 +10,8 @@ import { LabelingQueue } from "./routes/labeling/index";
 import { LabelingFrame } from "./routes/labeling/frame";
 import { LabelingGroups } from "./routes/labeling/groups";
 import { LabelingSimilarity } from "./routes/labeling/similarity";
+import { LabelingTracks } from "./routes/labeling/tracks";
+import { LabelingTrackDetail } from "./routes/labeling/track-detail";
 import { LabelingClip } from "./routes/labeling/clip";
 import { ClassesList } from "./routes/classes/index";
 import { ClassDetail } from "./routes/classes/detail";
@@ -38,6 +40,8 @@ export default function App() {
           <Route path="/labeling" element={<LabelingQueue />} />
           <Route path="/labeling/groups" element={<LabelingGroups />} />
           <Route path="/labeling/similarity" element={<LabelingSimilarity />} />
+          <Route path="/labeling/tracks" element={<LabelingTracks />} />
+          <Route path="/labeling/tracks/:id" element={<LabelingTrackDetail />} />
           <Route path="/labeling/clips/:id" element={<LabelingClip />} />
           <Route path="/labeling/:fid" element={<LabelingFrame />} />
           <Route path="/classes" element={<ClassesList />} />

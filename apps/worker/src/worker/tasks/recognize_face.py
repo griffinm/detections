@@ -48,9 +48,15 @@ async def _recognize_face_async(detection_id: str) -> bool:
             return False  # no face found inside the person crop
 
         detection.face_embedding = embedding
+        track_id = detection.track_id
         await session.commit()
 
-    celery_app.send_task("vd.assign_subclass", args=[detection_id], queue="gpu")
+    if track_id is not None:
+        celery_app.send_task(
+            "vd.assign_track_subclass", args=[str(track_id)], queue="gpu"
+        )
+    else:
+        celery_app.send_task("vd.assign_subclass", args=[detection_id], queue="gpu")
     return True
 
 

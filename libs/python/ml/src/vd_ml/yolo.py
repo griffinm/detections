@@ -19,6 +19,15 @@ class Box(NamedTuple):
     bbox: dict[str, float]
 
 
+class TrackedBox(NamedTuple):
+    """A detected box plus the tracker-assigned track id (None if unassigned)."""
+
+    class_index: int
+    score: float
+    bbox: dict[str, float]
+    track_id: int | None
+
+
 def to_normalized_bbox(
     x1: float, y1: float, x2: float, y2: float, img_w: float, img_h: float
 ) -> dict[str, float]:
@@ -146,6 +155,63 @@ def _predict_with_oom_retry(
         )
 
 
+def detect_and_track(
+    model: Any,
+    image_paths: list[Path],
+    conf: float,
+    tracker_config: str = "botsort.yaml",
+    device: int | str = 0,
+) -> list[list[TrackedBox]]:
+    """Run YOLO + tracker on a clip's frames *in temporal order*.
+
+    Returns per-image lists of `TrackedBox` aligned with `image_paths`. The
+    tracker (BoT-SORT by default) maintains state across frames within this
+    call and is reset at the start — one call = one clip.
+    """
+    if not image_paths:
+        return []
+    device = _require_cuda_device(device)
+    results = list(
+        model.track(
+            source=[str(p) for p in image_paths],
+            conf=conf,
+            tracker=tracker_config,
+            persist=False,
+            stream=False,
+            device=device,
+            verbose=False,
+        )
+    )
+    batch: list[list[TrackedBox]] = []
+    for res in results:
+        out: list[TrackedBox] = []
+        if res.boxes is not None and len(res.boxes) > 0:
+            img_h, img_w = res.orig_shape
+            ids_attr = getattr(res.boxes, "id", None)
+            ids = ids_attr.tolist() if ids_attr is not None else [None] * len(res.boxes)
+            for cls, score, xyxy, tid in zip(
+                res.boxes.cls.tolist(),
+                res.boxes.conf.tolist(),
+                res.boxes.xyxy.tolist(),
+                ids,
+                strict=True,
+            ):
+                x1, y1, x2, y2 = xyxy
+                bbox = to_normalized_bbox(x1, y1, x2, y2, img_w, img_h)
+                if bbox["w"] <= 0.0 or bbox["h"] <= 0.0:
+                    continue
+                out.append(
+                    TrackedBox(
+                        class_index=int(cls),
+                        score=float(score),
+                        bbox=bbox,
+                        track_id=int(tid) if tid is not None else None,
+                    )
+                )
+        batch.append(out)
+    return batch
+
+
 def predict_batch(
     model: Any, image_paths: list[Path], conf: float, device: int | str = 0
 ) -> list[list[Box]]:
@@ -170,7 +236,8 @@ def predict_batch(
                 res.boxes.xyxy.tolist(),
                 strict=True,
             ):
-                bbox = to_normalized_bbox(*xyxy, img_w, img_h)
+                x1, y1, x2, y2 = xyxy
+                bbox = to_normalized_bbox(x1, y1, x2, y2, img_w, img_h)
                 if bbox["w"] <= 0.0 or bbox["h"] <= 0.0:
                     continue
                 boxes.append(Box(class_index=int(cls), score=float(score), bbox=bbox))

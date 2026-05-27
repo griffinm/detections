@@ -13,65 +13,19 @@ import asyncio
 import uuid
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from vd_db import load_effective_settings
+from vd_db import knn_subclass, load_effective_settings
 from vd_db.models import (
     DetectionAudit,
     DetectionModel,
     Frame,
     ModelVersion,
     Subclass,
-    SubclassExample,
 )
 from vd_tasks.app import celery_app
 
 from worker.db import db_session
 from worker.events import publish
-
-
-async def _knn_subclass(
-    session: AsyncSession,
-    class_id: uuid.UUID,
-    detection_id: uuid.UUID,
-    query_vec: object,
-    use_face: bool,
-) -> tuple[uuid.UUID, float] | None:
-    """Return the (subclass_id, confidence) winner of a top-5 cosine kNN.
-
-    The winner is the sub-class with the most votes among the 5 nearest
-    example detections; ties break on mean cosine similarity, which is also
-    the reported confidence. The detection itself is excluded so an example
-    cannot self-confirm.
-    """
-    emb = DetectionModel.face_embedding if use_face else DetectionModel.object_embedding
-    distance = emb.cosine_distance(query_vec)
-    rows = (
-        await session.execute(
-            select(Subclass.id, distance.label("dist"))
-            .select_from(SubclassExample)
-            .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
-            .join(Subclass, Subclass.id == SubclassExample.subclass_id)
-            .where(
-                Subclass.class_id == class_id,
-                Subclass.is_active.is_(True),
-                DetectionModel.id != detection_id,
-                DetectionModel.deleted_at.is_(None),
-                emb.is_not(None),
-            )
-            .order_by(distance)
-            .limit(5)
-        )
-    ).all()
-    if not rows:
-        return None
-
-    sims: dict[uuid.UUID, list[float]] = {}
-    for subclass_id, dist in rows:
-        sims.setdefault(subclass_id, []).append(1.0 - float(dist))
-    winner = max(sims, key=lambda sid: (len(sims[sid]), sum(sims[sid]) / len(sims[sid])))
-    members = sims[winner]
-    return winner, sum(members) / len(members)
 
 
 async def _assign_subclass_async(detection_id: str) -> bool:
@@ -127,7 +81,7 @@ async def _assign_subclass_async(detection_id: str) -> bool:
             if still_active is None:
                 return False
         else:
-            match = await _knn_subclass(
+            match = await knn_subclass(
                 session, detection.class_id, det_id, query_vec, use_face
             )
             if match is None:

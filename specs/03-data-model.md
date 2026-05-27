@@ -145,6 +145,7 @@ The core table. One row per bounding box on a frame. Stores both the
 | deleted_at            | timestamptz        | soft delete; NULL = live, set = user-removed (migration 003) |
 | face_embedding        | vector(512)        | InsightFace ArcFace; NULL for non-face      |
 | object_embedding      | vector(768)        | DINOv2-S; NULL until computed               |
+| track_id              | uuid REFERENCES tracks(id) ON DELETE SET NULL | NULL when tracker didn't link, or for pre-Phase-9 detections |
 
 ```sql
 CREATE TYPE det_source AS ENUM ('model','user');
@@ -155,12 +156,50 @@ Indexes:
 - `(class_id, reviewed)` for accuracy queries
 - HNSW on `face_embedding` (`vector_cosine_ops`)
 - HNSW on `object_embedding` (`vector_cosine_ops`)
+- `(track_id) WHERE track_id IS NOT NULL` for track membership lookups
 
 Why keep `predicted_class_id` alongside `class_id`?
 The requirement is to track accuracy of automatic assignments over time. We
 need to know what the *model said* and what the *truth turned out to be*.
 Storing both on the same row keeps it simple — the audit log (below) records
 the *transitions*, but the current+original snapshot lives here.
+
+### `tracks`
+
+A sequence of detections believed to be the same physical object within one
+clip. Populated by `vd.detect_and_track_clip` (BoT-SORT). Sub-class
+assignment runs at the track level — `vd.assign_track_subclass` votes across
+member detections, which is more robust at 1 fps than per-frame kNN.
+
+| Column                | Type            | Notes                                                       |
+|-----------------------|-----------------|-------------------------------------------------------------|
+| id                    | uuid PK         |                                                             |
+| clip_id               | uuid NOT NULL REFERENCES clips(id) ON DELETE CASCADE |                |
+| class_id              | uuid REFERENCES classes(id) ON DELETE SET NULL | current (majority/user)         |
+| subclass_id           | uuid REFERENCES subclasses(id) ON DELETE SET NULL | current (vote/user)         |
+| predicted_class_id    | uuid REFERENCES classes(id) ON DELETE SET NULL | tracker's class vote            |
+| predicted_subclass_id | uuid REFERENCES subclasses(id) ON DELETE SET NULL | recognition vote             |
+| confidence_class      | real            | mean over the track's detection scores                      |
+| confidence_subclass   | real            | mean similarity of the winning sub-class vote               |
+| n_detections          | int NOT NULL DEFAULT 0 |                                                      |
+| first_frame_index     | int NOT NULL    | min `frame_index` over live members                         |
+| last_frame_index      | int NOT NULL    | max `frame_index` over live members                         |
+| source                | track_source NOT NULL | enum: 'tracker','user' ('user' reserved for Stage B split/merge) |
+| model_version_id      | uuid REFERENCES model_versions(id) ON DELETE SET NULL | YOLO version that produced it |
+| reviewed              | bool NOT NULL DEFAULT false |                                                 |
+| reviewed_at           | timestamptz     |                                                             |
+| deleted_at            | timestamptz     | soft delete; parallels `detections.deleted_at`              |
+
+```sql
+CREATE TYPE track_source AS ENUM ('tracker','user');
+```
+
+Indexes: `(clip_id, first_frame_index)`, `(class_id, reviewed)`,
+`(clip_id) WHERE deleted_at IS NULL`.
+
+`detections.track_id` is a nullable FK to `tracks(id)` ON DELETE SET NULL.
+Pre-Phase-9 detections stay NULL; a tracker-dropped single-frame detection
+also stays NULL.
 
 ### `subclass_examples`
 
@@ -239,6 +278,39 @@ CREATE TYPE audit_reason AS ENUM
 
 This is what we slice for accuracy-over-time charts. Insert-only.
 
+### `track_audits`
+
+The track-shape ledger. Track-level events — split, merge, reassign, review,
+delete — write rows here. Per-detection class/subclass propagation from a
+track-level PATCH still flows through `detection_audits` with the existing
+`user_reassign` / `user_review` reasons; the `audit_reason` enum is
+intentionally not extended.
+
+| Column             | Type    | Notes                                              |
+|--------------------|---------|----------------------------------------------------|
+| id                 | bigserial PK |                                               |
+| track_id           | uuid NOT NULL REFERENCES tracks(id) ON DELETE CASCADE | |
+| at                 | timestamptz NOT NULL DEFAULT now() |                       |
+| reason             | track_audit_reason NOT NULL | enum                          |
+| from_class_id      | uuid REFERENCES classes(id) ON DELETE SET NULL | for `user_reassign` |
+| to_class_id        | uuid REFERENCES classes(id) ON DELETE SET NULL |                  |
+| from_subclass_id   | uuid REFERENCES subclasses(id) ON DELETE SET NULL |               |
+| to_subclass_id     | uuid REFERENCES subclasses(id) ON DELETE SET NULL |               |
+| from_track_id      | uuid | the other track in a split/merge; no FK because the original may have been soft-deleted |
+| to_track_id        | uuid |                                                              |
+| pivot_frame_index  | int  | non-null for `user_split`                                    |
+| n_detections_moved | int  | how many detections moved in a split/merge                   |
+| model_version_id   | uuid REFERENCES model_versions(id) ON DELETE SET NULL |          |
+
+```sql
+CREATE TYPE track_audit_reason AS ENUM
+  ('initial','user_reassign','user_review','user_split','user_merge','user_delete');
+```
+
+`initial` is emitted by `vd.detect_and_track_clip` when a new track row is
+created, so the ledger has a "first seen at" row per track without scanning
+detections. Indexes: `(track_id, at DESC)`, `(reason)`.
+
 ### `daily_metrics` (materialized view; refreshed nightly + on demand)
 
 Pre-aggregated metrics, broken out per class, per model_version, per day:
@@ -312,10 +384,13 @@ clips ─┬───< frames ─┬───< detections >─── classes
        │             │         │
        │             │         └─── subclasses (>── classes)
        │             │         │
-       │             │         └─── subclass_examples
+       │             │         ├─── subclass_examples
+       │             │         │
+       │             │         └─── track_id ──> tracks
        │             │
        │             └─── (file on disk)
        │
+       ├───< tracks (per-clip; aggregates detections; see spec 05)
        ├───< webhook_deliveries   (external-job callbacks)
        ├─── canonical_clip_id ──> clips   (self-FK, dedup)
        │
@@ -327,6 +402,7 @@ model_versions ───< training_runs
               detections (model_version_id)
 
 detection_audits ──> detections, classes, subclasses, model_versions
+track_audits     ──> tracks, classes, subclasses, model_versions
 ```
 
 ## Open questions

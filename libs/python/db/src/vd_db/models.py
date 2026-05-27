@@ -64,6 +64,17 @@ DeliveryStatus = Enum(
     name="delivery_status",
 )
 
+TrackSource = Enum(
+    "tracker", "user",
+    name="track_source",
+)
+
+TrackAuditReason = Enum(
+    "initial", "user_reassign", "user_review",
+    "user_split", "user_merge", "user_delete",
+    name="track_audit_reason",
+)
+
 
 # ---------------------------------------------------------------------------
 # Tables
@@ -205,10 +216,97 @@ class DetectionModel(Base, UUIDPKMixin, TimestampMixin):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     face_embedding: Mapped[Any | None] = mapped_column(Vector(512))
     object_embedding: Mapped[Any | None] = mapped_column(Vector(768))
+    track_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tracks.id", ondelete="SET NULL")
+    )
 
     frame: Mapped["Frame"] = relationship(back_populates="detections")
+    track: Mapped["Track | None"] = relationship(back_populates="detections")
     examples: Mapped[list["SubclassExample"]] = relationship(back_populates="detection")
     audits: Mapped[list["DetectionAudit"]] = relationship(back_populates="detection")
+
+
+class Track(Base, UUIDPKMixin, TimestampMixin):
+    """A sequence of detections believed to be the same physical object within
+    one clip (BoT-SORT). Sub-class assignment votes across track members
+    instead of running per-detection — see `vd.assign_track_subclass`.
+    """
+
+    __tablename__ = "tracks"
+
+    clip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clips.id", ondelete="CASCADE"), nullable=False
+    )
+    class_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("classes.id", ondelete="SET NULL")
+    )
+    subclass_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subclasses.id", ondelete="SET NULL")
+    )
+    predicted_class_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("classes.id", ondelete="SET NULL")
+    )
+    predicted_subclass_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subclasses.id", ondelete="SET NULL")
+    )
+    confidence_class: Mapped[float | None] = mapped_column()
+    confidence_subclass: Mapped[float | None] = mapped_column()
+    n_detections: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    first_frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(TrackSource, nullable=False)
+    model_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("model_versions.id", ondelete="SET NULL")
+    )
+    reviewed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    detections: Mapped[list["DetectionModel"]] = relationship(back_populates="track")
+    audits: Mapped[list["TrackAudit"]] = relationship(back_populates="track")
+
+
+class TrackAudit(Base, TimestampMixin):
+    """Track-shape ledger: split / merge / reassign / review / delete.
+
+    Per-detection class/subclass propagation from a track PATCH still writes
+    `detection_audits` rows with the existing reasons; this table records the
+    track-level event itself plus split/merge linkage.
+    """
+
+    __tablename__ = "track_audits"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    track_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False
+    )
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()"
+    )
+    reason: Mapped[str] = mapped_column(TrackAuditReason, nullable=False)
+    from_class_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("classes.id", ondelete="SET NULL")
+    )
+    to_class_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("classes.id", ondelete="SET NULL")
+    )
+    from_subclass_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subclasses.id", ondelete="SET NULL")
+    )
+    to_subclass_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subclasses.id", ondelete="SET NULL")
+    )
+    # No FKs: a split/merge audit may reference a track that's since been
+    # soft-deleted, and we still want the audit row to resolve.
+    from_track_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    to_track_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    pivot_frame_index: Mapped[int | None] = mapped_column(Integer)
+    n_detections_moved: Mapped[int | None] = mapped_column(Integer)
+    model_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("model_versions.id", ondelete="SET NULL")
+    )
+
+    track: Mapped["Track"] = relationship(back_populates="audits")
 
 
 class SubclassExample(Base, UUIDPKMixin, TimestampMixin):

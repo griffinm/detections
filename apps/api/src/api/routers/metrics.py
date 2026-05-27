@@ -22,8 +22,9 @@ from api.schemas.metrics import (
     ClassMetric,
     MetricsSummary,
     ReassignmentItem,
+    TrackAccuracyPoint,
 )
-from vd_db.models import Class, Clip, DetectionAudit, DetectionModel, Frame, Subclass
+from vd_db.models import Class, Clip, DetectionAudit, DetectionModel, Frame, Subclass, Track
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
 
@@ -230,6 +231,73 @@ async def summary(db: AsyncSession = Depends(get_db)) -> MetricsSummary:
         pending_review=pending or 0,
         last7d_class_accuracy=None if last7d is None else float(last7d),
     )
+
+
+@router.get("/tracks", response_model=list[TrackAccuracyPoint])
+async def tracks_accuracy(
+    bucket: str = Query(default="day"),
+    class_id: uuid.UUID | None = Query(default=None),
+    model_version_id: uuid.UUID | None = Query(default=None),
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[TrackAccuracyPoint]:
+    """Track-level top-1 accuracy time series — model's track-level guesses
+    judged against the user-confirmed track state.
+    """
+    if bucket not in ("day", "week"):
+        raise HTTPException(status_code=422, detail="bucket must be 'day' or 'week'")
+
+    period = func.date_trunc(bucket, Track.reviewed_at).label("period")
+    class_correct = case(
+        (Track.predicted_class_id == Track.class_id, 1.0), else_=0.0
+    )
+    subclass_correct = case(
+        (Track.predicted_subclass_id.is_not_distinct_from(Track.subclass_id), 1.0),
+        else_=0.0,
+    )
+    query = (
+        select(
+            period,
+            Track.model_version_id,
+            func.count().label("n"),
+            func.avg(class_correct).label("class_top1"),
+            func.avg(subclass_correct).label("subclass_top1"),
+            func.avg(Track.confidence_class).label("mean_conf"),
+        )
+        .where(
+            Track.reviewed.is_(True),
+            Track.reviewed_at.is_not(None),
+            Track.deleted_at.is_(None),
+            Track.source == "tracker",  # user-created tracks have no model prediction to score
+            Track.predicted_class_id.is_not(None),
+        )
+        .group_by(period, Track.model_version_id)
+        .order_by(period)
+    )
+    if class_id is not None:
+        query = query.where(Track.class_id == class_id)
+    if model_version_id is not None:
+        query = query.where(Track.model_version_id == model_version_id)
+    if from_ is not None:
+        query = query.where(Track.reviewed_at >= from_)
+    if to is not None:
+        query = query.where(Track.reviewed_at <= to)
+
+    rows = (await db.execute(query)).all()
+    return [
+        TrackAccuracyPoint(
+            period=row.period,
+            model_version_id=row.model_version_id,
+            n_reviewed=row.n,
+            class_top1=float(row.class_top1 or 0.0),
+            subclass_top1=None
+            if row.subclass_top1 is None
+            else float(row.subclass_top1),
+            mean_confidence=None if row.mean_conf is None else float(row.mean_conf),
+        )
+        for row in rows
+    ]
 
 
 @router.get("/changes", response_model=list[ReassignmentItem])

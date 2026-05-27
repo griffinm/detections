@@ -74,16 +74,17 @@ async def _extract_frames_async(clip_id: str) -> int:
                 await session.execute(stmt)
             await session.commit()
 
-        # Schedule detection in gpu-queue batches; completion is reported by
-        # vd.detect_frame_batch once every frame of the clip is detected.
+        # Detection + tracking runs as a single per-clip pass — the tracker
+        # needs frame order and accumulates state across the whole clip.
         kept_ids = list(
             await session.scalars(
                 select(Frame.id).where(Frame.clip_id == cid, Frame.kept.is_(True))
             )
         )
-        for start in range(0, len(kept_ids), settings.detect_batch_size):
-            chunk = [str(fid) for fid in kept_ids[start: start + settings.detect_batch_size]]
-            celery_app.send_task("vd.detect_frame_batch", args=[chunk], queue="gpu")
+        if kept_ids:
+            celery_app.send_task(
+                "vd.detect_and_track_clip", args=[clip_id], queue="gpu"
+            )
 
         # NVENC compression runs on the gpu queue too; FIFO drains detect
         # batches before it, so detection latency is unaffected per-clip.

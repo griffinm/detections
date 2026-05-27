@@ -49,7 +49,7 @@ Two callers: the folder watcher passes only `path` (a watched `inbox/` drop);
   - **Job path** — set this row's `canonical_clip_id` to the existing clip and
     return; do not extract frames again. The job's result and callback resolve
     through `canonical_clip_id`; the canonical clip's completion handler fans
-    the callback out to it (see `vd.detect_frame_batch`).
+    the callback out to it (see `vd.detect_and_track_clip`).
 - Otherwise: ffprobe for metadata. If `clip_id` was supplied, UPDATE that row
   (status stays `pending`; fill in sha256/size/duration/dimensions/codec);
   else INSERT a fresh `clips` row (`source='watch'`). Schedule
@@ -74,8 +74,11 @@ failure handler fires a `clip.failed` callback for any clip with a
   here on the `cpu` worker, in the same directory walk as the row insert. The
   hash is the similarity signal for near-duplicate pruning (see
   `vd.dedup_clip_frames`).
-- Schedule `vd.detect_frame_batch` tasks on the `gpu` queue (`VD_DETECT_BATCH_SIZE`
-  frames per task, default 16, to amortize model warm-up).
+- Schedule a single `vd.detect_and_track_clip(clip_id)` task on the `gpu`
+  queue. The tracker needs frame order across the whole clip, so detection
+  is one task per clip (not per batch). `VD_DETECT_BATCH_SIZE` is unused
+  here; if Ultralytics' internal batching needs tuning that lives inside
+  the tracker config.
 - If `VD_COMPRESS_PROCESSED_VIDEOS` is set, schedule `vd.compress_video` on
   `gpu` too — it FIFOs behind detect so it doesn't delay detection latency.
 - Set clip status → `detecting` (or straight to `done` if the clip yielded
@@ -112,39 +115,59 @@ contend with YOLO for compute — but the worker's `concurrency=1`
 serializes them at the Celery level. Splitting compression onto its own
 queue is deferred (see `specs/deferred.md`).
 
-### `vd.detect_frame_batch(frame_ids: list[uuid])`
+### `vd.detect_and_track_clip(clip_id: uuid)`
+
+Per-clip detection + BoT-SORT tracking. Replaces the older per-batch
+`vd.detect_frame_batch`: the tracker needs frame order and accumulates state
+across the whole clip, so one task processes one clip.
+
 - Load active YOLO model (process-level singleton; loaded once at worker boot).
-- Read frame JPEGs from disk (parallel).
-- Run YOLO `model.predict(images, conf=detection_min_confidence, device=0)`.
-  The device is pinned to CUDA 0: `vd_ml.predict_batch` rejects a missing GPU
-  with a `RuntimeError` rather than letting Ultralytics fall back to CPU at
-  ~10× the latency.
+- Load the clip's kept frames with `detect_status='pending'` in
+  `frame_index` order.
+- Run `vd_ml.detect_and_track(model, frame_paths, conf, tracker=settings.tracker)`,
+  which wraps Ultralytics `model.track(source=..., persist=False,
+  tracker=...)`. The tracker is BoT-SORT by default; ByteTrack and custom
+  paths work too (see `VD_TRACKER`). Device pinning + GPU-required guard
+  mirror `predict_batch`.
 - For each frame:
   - Frames with zero detections stay `kept=true` and on disk — YOLO can miss
     objects, and the labeling UI lets the user add a box manually after the
     fact. Only `vd.dedup_clip_frames` flips `kept=false` and unlinks JPEGs.
-  - Insert a `detection` row per box: `source='model'`,
-    `predicted_class_id` = lookup by yolo class index, `class_id` mirrors
-    predicted at insert, `model_version_id` = active YOLO version,
-    `confidence_class` = raw score.
-  - Write a `detection_audits` row for each new detection with
-    `reason='initial_prediction'`.
-  - For person-class detections, schedule `vd.recognize_face(detection_id)`.
-  - For any other detection that has at least one labeled sub-class in its
-    class, schedule `vd.embed_object(detection_id)`.
-- Set per-frame `detect_status='done'`.
-- Publish `frame.detect.done` event to Redis pub/sub.
-- After the batch, if no frame of the clip is still `detect_status='pending'`,
-  set clip status → `done`, publish `clip.done`, schedule
-  `vd.dedup_clip_frames(clip_id)` on the `cpu` queue, and — for this clip *and*
-  every clip whose `canonical_clip_id` points at it — schedule
-  `vd.deliver_callback` on `cpu` for each that has a `callback_url`. Dedup is
-  an off-critical-path cleanup pass — the clip is `done` regardless of whether/
-  when it runs.
+  - For each tracked box:
+    - Lazily create a `tracks` row when the tracker emits a new id within
+      this call (in-memory map from tracker int id → track uuid). Bump
+      `n_detections` / `last_frame_index` as members accumulate.
+    - Insert a `detection` row per box: `source='model'`,
+      `predicted_class_id` = lookup by yolo class index, `class_id` mirrors
+      predicted at insert, `model_version_id` = active YOLO version,
+      `confidence_class` = raw score, `track_id` = the tracks row's uuid
+      (NULL when the tracker didn't link the box).
+    - Write a `detection_audits` row with `reason='initial_prediction'`.
+  - Set per-frame `detect_status='done'`.
+- After the loop, compute per-track aggregates: `class_id` = majority class
+  of the track's detections, `confidence_class` = mean. (Predicted equals
+  current until a user reassigns in Stage B.)
+- For person-class detections, schedule `vd.recognize_face(detection_id)`.
+  For any other detection that has at least one labeled sub-class in its
+  class, schedule `vd.embed_object(detection_id)`. Those tasks dispatch to
+  `vd.assign_track_subclass(track_id)` when the detection has a track; loose
+  detections (`track_id IS NULL`) keep the legacy `vd.assign_subclass` chain.
+- Publish `frame.detect.done` per frame.
+- Mark the clip `done` with a `status='detecting'`-guarded UPDATE (one task
+  per clip means the per-batch race the old code defended against is gone,
+  but the guard still keeps a re-run from re-firing the completion side
+  effects). Publish `clip.done`, schedule `vd.dedup_clip_frames(clip_id)` on
+  the `cpu` queue, and — for this clip *and* every clip whose
+  `canonical_clip_id` points at it — schedule `vd.deliver_callback` on `cpu`
+  for each that has a `callback_url`. Dedup is an off-critical-path cleanup
+  pass — the clip is `done` regardless of whether/when it runs.
 
-GPU streaming: the worker uses a process-level YOLO instance and reads
-frames into a torch tensor in batches. Batching gives a 3-5× throughput
-improvement vs per-frame inference.
+Idempotency: detections are inserted only for frames whose `detect_status`
+is still `pending`, so a re-run picks up where the previous attempt left off.
+The `status='detecting'` guard on the clip update prevents double completion.
+
+Tracker scope: tracks live within one clip. Re-extracting a clip wipes its
+tracks (see `vd.reextract_frames`); no cross-clip tracker state is kept.
 
 ### `vd.recognize_face(detection_id: uuid)`
 - Load the detection's frame, crop the bbox.
@@ -161,6 +184,35 @@ improvement vs per-frame inference.
 - Run DINOv2 small (Hugging Face `facebook/dinov2-small`) → vector(768).
 - Store on `detections.object_embedding`.
 - Schedule `vd.assign_subclass(detection_id)`.
+
+### `vd.assign_track_subclass(track_id: uuid)`
+
+Track-level sub-class vote. Scheduled by `recognize_face` / `embed_object`
+once an embedding lands, whenever the underlying detection has a
+`track_id`. The legacy `vd.assign_subclass(detection_id)` still handles
+user-drawn loose detections (`track_id IS NULL`).
+
+- Load the track and its non-deleted member detections (filtered to those
+  matching the track's `class_id` — user reassignment can leave a member
+  mid-class until Stage B's UI lands).
+- For each member with an embedding: run the same kNN (or active per-class
+  classifier) the per-detection assigner does, via the shared
+  `vd_db.knn_subclass` helper. Face beats object when both are present.
+- Aggregate: bucket per-detection winners by sub-class. Majority wins;
+  ties break on mean cosine similarity. `confidence_subclass` = mean of the
+  winning bucket's per-detection confidences.
+- If the winning mean similarity ≥ `subclass_min_confidence`:
+  - Set `tracks.predicted_subclass_id` + `tracks.subclass_id` +
+    `tracks.confidence_subclass`.
+  - **Propagate** to detections: for every member where `reviewed=false AND
+    source='model' AND deleted_at IS NULL` and the existing `subclass_id`
+    differs from the winner, update + write a `detection_audits` row
+    (`reason='initial_prediction'`). The Stage A enum is unchanged; the
+    track-shape audit reasons (`track_split`, `track_merge`) land with the
+    Stage B UI.
+- Idempotent: re-runs hit the same vote and only write when the assignment
+  actually changes, so the N-fires-per-N-detection chain stays quiet after
+  it has converged. Publishes `clip.tracks_updated` when the track changes.
 
 ### `vd.assign_subclass(detection_id: uuid)`
 - Look up class.
@@ -190,8 +242,9 @@ improvement vs per-frame inference.
 - Write `predicted_class_id` + `confidence_class`. Set `class_id` to the
   predicted class **only when it was null** — a class the user already
   picked wins. If `class_id` ends up set, chain `vd.recognize_face` /
-  `vd.embed_object` (same logic as `vd.detect_frame_batch`) so the
-  sub-class pipeline runs.
+  `vd.embed_object` (same logic as `vd.detect_and_track_clip`) so the
+  sub-class pipeline runs. User-drawn boxes are not assigned a track id —
+  they route through the legacy per-detection `vd.assign_subclass`.
 - Insert a `detection_audits` row (`reason='initial_prediction'`,
   `to_class_id=matched_class | NULL`, `model_version_id=version.id`)
   and publish `frame.updated`.
@@ -263,11 +316,32 @@ improvement vs per-frame inference.
 - Re-runs detection over historical kept frames using the given model.
 - Lower priority queue. Cancellable.
 
+### `vd.backfill_tracks(clip_id?: uuid, limit: int = 100)` *(`cpu` queue)*
+
+Re-tracks pre-Phase-9 clips: those with detections but no `tracks` row.
+Targeted (one clip) and sweep (`clip_id=None`) variants — `/system` exposes
+both. Idempotent: a clip with any live track is silently skipped.
+
+Per clip in scope:
+
+1. Delete unreviewed model-source detections in one
+   `DELETE … WHERE source='model' AND reviewed=false AND deleted_at IS NULL
+   AND frame_id IN (frames of clip)`; CASCADE wipes their audits. User-source
+   detections and reviewed model detections survive with `track_id=NULL`.
+2. `UPDATE frames SET detect_status='pending' WHERE clip_id=cid AND kept=true`.
+3. `UPDATE clips SET status='detecting' WHERE id=cid AND status='done'`.
+4. Schedule `vd.detect_and_track_clip(clip_id)` on `gpu`.
+
+Sweep mode walks eligible clips oldest-first, capped at `limit` per run, so
+a `/system` button drains the backlog without a single task ballooning. Track
+ids are not stable across re-runs — don't auto-sweep clips with in-flight
+labelling work.
+
 ### `vd.dedup_clip_frames(clip_id: uuid)` *(`cpu` queue)*
 
 Collapses runs of near-identical frames within one clip down to a single
-representative. Scheduled by `vd.detect_frame_batch` once the clip finishes
-detecting; a no-op when `prune_similar_frames` is unset.
+representative. Scheduled by `vd.detect_and_track_clip` once the clip
+finishes detecting; a no-op when `prune_similar_frames` is unset.
 
 - Load the clip's frames with `kept=true` and a non-null `phash`, ordered by
   `frame_index`. (Frames with no `phash` — e.g. pre-feature clips not yet
@@ -292,6 +366,11 @@ detecting; a no-op when `prune_similar_frames` is unset.
     gate that authorised it is `prune_similar_frames`, checked once here, not
     per file. (Dedup is now the only writer of `kept=false`; empty-detection
     frames stay kept so the user can manually add boxes YOLO missed.)
+- After pruning, recompute each affected track's `n_detections` /
+  `first_frame_index` / `last_frame_index` from the surviving live members.
+  A track left with zero live detections is soft-deleted (`deleted_at`).
+  Track ids are not unlinked from surviving sibling detections — they were
+  always part of the same physical object.
 - Representative choice: the reference is not blindly the first frame of a
   run — among a run of mutual duplicates, keep the frame with the most
   detections, tie-broken by highest mean `confidence_class`, so the surviving
@@ -340,7 +419,10 @@ ran with a worse model, with a wrong fps setting, or simply failed.
   would be destructive.
 - `DELETE FROM frames WHERE clip_id = …` (Core delete so the
   `ondelete=CASCADE` FKs drop detections, audits, and any
-  `subclass_examples` pointing at those detections). Clear
+  `subclass_examples` pointing at those detections). Then
+  `DELETE FROM tracks WHERE clip_id = …` — tracks are per-clip and not FK'd
+  through frames, so they need their own delete or they'd survive as
+  orphans referencing detections that no longer exist. Clear
   `clip.processed_at` + `error`, set `status='extracting'`, reset
   `ingested_at` to now, commit.
 - `shutil.rmtree(frames_dir)` to remove the frame JPEGs on disk.
@@ -450,11 +532,11 @@ Each task is idempotent:
   retry; once the file has moved, every prior step has succeeded, so a retry
   short-circuits on the not-in-source-dir check.
 - `extract_frames`: upsert on `(clip_id, frame_index)`.
-- `detect_frame_batch`: skip frames whose `detect_status='done'`. Clip
+- `detect_and_track_clip`: skip frames whose `detect_status='done'`. Clip
   completion is a single conditional `UPDATE clips SET status='done' WHERE
-  status='detecting' AND NOT EXISTS (pending frames)` — the status guard plus
-  `rowcount` make it correct even if batches for one clip run concurrently
-  (a read-then-write check would double-fire `clip.done`).
+  status='detecting'` — the status guard prevents a re-run from re-firing
+  `clip.done` even though one task per clip means there's no inter-batch
+  race to defend against.
 - `recognize_face` / `embed_object`: skip if embedding already non-null.
 - `assign_subclass`: pure compute; safe to re-run; only updates if the
   detection has not been user-reviewed.
@@ -496,6 +578,10 @@ Failure handling:
   `vd.deliver_callback` POST.
 - `VD_WEBHOOK_MAX_ATTEMPTS` — int (default 5). Callback retries before the
   `webhook_deliveries` row is marked `failed`.
+- `VD_TRACKER` — str (default `botsort.yaml`). Ultralytics tracker config
+  passed straight to `model.track(tracker=…)`. The built-in names
+  `botsort.yaml` and `bytetrack.yaml` work without shipping a file; an
+  absolute path is accepted for custom configs.
 
 ## Observability
 
@@ -515,7 +601,8 @@ Failure handling:
 - **GPU OOM safety net**: *implemented* — `vd_ml.yolo.predict_batch` catches
   CUDA `out of memory` errors, calls `torch.cuda.empty_cache()`, and recurses
   on each half of the batch; a single image that still OOMs re-raises. If
-  this fires often, lower `VD_DETECT_BATCH_SIZE`.
+  this fires often, the tracker's internal batching is the knob to turn
+  (its config file is the one set by `VD_TRACKER`).
 - **Process restart cost**: loading YOLO+InsightFace+DINOv2 weights once
   costs ~5–10s. Celery worker `--max-tasks-per-child` should be disabled or
   set very high so we don't reload per task.

@@ -19,6 +19,7 @@ from .routers import (
     stream,
     subclasses,
     system,
+    tracks,
     training,
 )
 
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
         settings_r,
         system,
         stream,
+        tracks,
     ):
         app.include_router(router.router, prefix="/api")
 

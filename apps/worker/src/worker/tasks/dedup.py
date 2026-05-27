@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from vd_db import load_effective_settings
+from vd_db import load_effective_settings, recount_clip_tracks
 from vd_db.models import DetectionAudit, DetectionModel, Frame
 from vd_tasks.app import celery_app
 
@@ -142,6 +142,10 @@ async def _dedup_clip_frames_async(clip_id: str) -> int:
                 pruned.append(frame.id)
         await session.commit()
         kept = len(frames) - len(pruned)
+
+        if pruned:
+            await recount_clip_tracks(session, cid)
+            await session.commit()
 
     # Unlink the JPEGs of the pruned frames — a duplicate is redundant by
     # definition.

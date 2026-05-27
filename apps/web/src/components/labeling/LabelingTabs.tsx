@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
-type LabelingTab = "queue" | "groups" | "similarity" | "clip";
+type LabelingTab = "queue" | "groups" | "similarity" | "tracks" | "clip";
 
 interface Props {
   /** Which sub-page is active. */
@@ -12,6 +12,7 @@ const TABS: ReadonlyArray<{ value: LabelingTab; label: string; to: string }> = [
   { value: "queue", label: "Frame queue", to: "/labeling" },
   { value: "groups", label: "Predicted groups", to: "/labeling/groups" },
   { value: "similarity", label: "Similarity clusters", to: "/labeling/similarity" },
+  { value: "tracks", label: "Tracks", to: "/labeling/tracks" },
   { value: "clip", label: "By clip", to: "/clips" },
 ];
 

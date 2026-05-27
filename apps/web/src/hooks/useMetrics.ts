@@ -84,6 +84,13 @@ export function useMetricsSummary() {
   });
 }
 
+export function useTracksAccuracy(bucket: "day" | "week") {
+  return useQuery<AccuracyPoint[]>({
+    queryKey: ["metrics", "tracks", bucket],
+    queryFn: () => getJson(`/api/metrics/tracks?bucket=${bucket}`),
+  });
+}
+
 export function useRecentChanges() {
   return useQuery<ReassignmentItem[]>({
     queryKey: ["metrics", "changes"],

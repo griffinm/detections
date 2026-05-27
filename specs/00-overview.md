@@ -142,6 +142,9 @@ submission and spec 04 §Jobs.
   `Buddy` under `dog`). Optional.
 - **Detection**: one bounding box on one frame with a class (and optionally a
   sub-class), plus confidences and an embedding.
+- **Track**: a sequence of detections within one clip believed to be the same
+  physical object (BoT-SORT). Sub-class assignment votes across track
+  members; cross-clip identity is what `subclasses` are for.
 - **Sub-class example**: a detection a user has marked as a canonical example
   of a sub-class, used as a kNN reference.
 - **Ground truth**: a detection's user-confirmed state. Distinct from the

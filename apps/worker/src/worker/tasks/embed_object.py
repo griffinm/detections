@@ -38,9 +38,15 @@ async def _embed_object_async(detection_id: str) -> bool:
 
         dino = load_dino(cache_dir=str(settings.models_dir / "hf"))
         detection.object_embedding = embed_crop(dino, crop)
+        track_id = detection.track_id
         await session.commit()
 
-    celery_app.send_task("vd.assign_subclass", args=[detection_id], queue="gpu")
+    if track_id is not None:
+        celery_app.send_task(
+            "vd.assign_track_subclass", args=[str(track_id)], queue="gpu"
+        )
+    else:
+        celery_app.send_task("vd.assign_subclass", args=[detection_id], queue="gpu")
     return True
 
 

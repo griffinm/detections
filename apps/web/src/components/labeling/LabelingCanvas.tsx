@@ -247,6 +247,29 @@ export function LabelingCanvas({ frame, classes, subclasses, actions }: Props) {
                   </Label>
                 );
               })()}
+            {selectedDet?.track_id &&
+              (() => {
+                const px = toPixelRect(selectedDet.bbox, dispW, dispH);
+                // Bottom-right corner so it doesn't collide with the class
+                // chip above the box. Short id is enough to disambiguate
+                // tracks within a clip — the full uuid is only useful for
+                // the deep-link target.
+                return (
+                  <Label
+                    x={px.x + px.w - 60}
+                    y={px.y + px.h + 4}
+                    listening={false}
+                  >
+                    <Tag fill="rgba(59,130,246,0.85)" cornerRadius={3} />
+                    <Text
+                      text={`track ${selectedDet.track_id.slice(0, 6)}`}
+                      fontSize={10}
+                      fill="#ffffff"
+                      padding={3}
+                    />
+                  </Label>
+                );
+              })()}
             {draft && (
               <Rect
                 x={draft.x}

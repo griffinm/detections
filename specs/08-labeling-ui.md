@@ -221,6 +221,43 @@ ordered by `frame_index` so the clip reads left-to-right. Multi-select supports
 click, shift-click range, and Select all / Clear; the Apply target is the
 sub-class chosen from a Select. Same bulk endpoint as above.
 
+### Tracks (`/labeling/tracks` and `/labeling/tracks/:id`) *(Phase 9 Stage B)*
+
+The "label every detection in this track in one click" view. List page is
+clip-scoped — pick a clip via the topbar Select, see every live track ordered
+by `first_frame_index`, with chips for status (reviewed / unreviewed),
+detection count, frame range, and predicted-sub-class confidence. Filters: by
+class and by review status. Tracks created by user split show a `user-split`
+marker so the user knows they're looking at a hand-carved track.
+
+The detail page (`/labeling/tracks/:id`) is the workhorse. Layout:
+
+- **Header card** — class, sub-class (with `(predicted: …)` chip when the
+  model's prediction differs from the current value), confidence, source
+  (`tracker` / `user`).
+- **Apply panel** — class + sub-class Selects (defaults to the current track
+  values), an Apply button that PATCHes the track with `reviewed=true`, and
+  three structural actions:
+  - **Split here** — uses the focused frame's `frame_index` as the pivot.
+    Confirms via `<Dialog>` because the result is two tracks where there was
+    one. On success, navigates to the newly-carved track.
+  - **Merge with…** — Dialog with a Select listing same-clip, same-class,
+    non-overlapping live tracks. Calls `POST /api/tracks/{id}/merge`.
+  - **Delete** — destructive Dialog confirm; soft-deletes the track and all
+    members.
+- **Member strip** — horizontal row of 96 px detection crops, one per member
+  frame, clickable to set the focused frame.
+- **Focused-frame preview** on the right — the cached crop plus an
+  `Open this frame ↗` deep-link to the per-frame canvas editor.
+
+### On-canvas track badge
+
+The per-frame canvas (`LabelingCanvas`) draws a small `track <short_id>`
+chip beneath the selected detection's bbox (color contrasts the existing
+class chip above it) whenever `detection.track_id` is set. Clicking the
+chip is a deep-link to the track detail page, so the canvas remains the
+quick way to jump from "this box is wrong" into the track-level editor.
+
 ### Similarity clusters (`/labeling/similarity`)
 
 Companion to `/labeling/groups`: that view groups by the auto-assigner's

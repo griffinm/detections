@@ -46,8 +46,10 @@ clip appears in the UI with ~30 frame thumbnails.
 Goal: COCO classes auto-detected on every frame.
 
 - GPU worker Dockerfile + image (CUDA + ultralytics).
-- `vd.detect_frame_batch` runs YOLOv11-L on batches; inserts `detections`
-  rows; writes initial `detection_audits`.
+- `vd.detect_and_track_clip` runs YOLOv11-L (+ BoT-SORT from Phase 9
+  onward) per clip; inserts `detections` rows; writes initial
+  `detection_audits`. (Originally `vd.detect_frame_batch` per batch; folded
+  into per-clip when tracking shipped.)
 - Frames with no detections stay on disk so the user can add a missing box
   manually from the labeling UI. (`kept=false` is reserved for dedup'd
   near-duplicates in spec 05.)
@@ -201,6 +203,59 @@ click, without changing the existing single-detection path.
 **Done when:** open `/labeling/groups`, expand a high-confidence group,
 hit Apply, and the `detection_audits` ledger gains one row per affected
 detection while the per-class metrics page reflects the new accuracy.
+
+## Phase 9 — Object tracking (M)
+
+Goal: detections of the same physical object within a clip are linked so the
+sub-class assigner votes across N frames instead of guessing per frame, and
+the labeling UI can collapse N decisions into one.
+
+### Stage A — worker pipeline (this phase)
+
+- New `tracks` table + `detections.track_id` FK + `track_source` enum
+  (Alembic 006).
+- Replace `vd.detect_frame_batch` with `vd.detect_and_track_clip`: one task
+  per clip, runs Ultralytics `model.track(tracker='botsort.yaml')`. Inserts
+  detections with `track_id` populated and lazily materialises `tracks` rows.
+- New `vd.assign_track_subclass`: kNN/classifier per member detection,
+  majority vote, propagates the winner to every unreviewed model-source
+  detection in the track.
+- `recognize_face` / `embed_object` end-of-chain dispatch: track-aware
+  detections route to `assign_track_subclass`; user-drawn loose detections
+  (`track_id IS NULL`) keep the legacy `vd.assign_subclass` path.
+- `vd.dedup_clip_frames` recounts track membership after pruning;
+  `vd.reextract_frames` wipes the clip's tracks.
+- `VD_TRACKER` env var (default `botsort.yaml`).
+
+**Done when:** drop a clip → `tracks` rows appear, one per tracked object;
+detections share `track_id`; sub-class confidence on a track is higher than
+its per-detection siblings would have been alone.
+
+### Stage B — UI + backfill
+
+- New `/api/tracks/*` router (GET clip→tracks, GET single, PATCH, split,
+  merge, DELETE) backed by `services/tracks_service.py`; per-detection
+  audits still land in `detection_audits` so accuracy queries don't have to
+  learn about tracks. `POST /api/labeling/bulk-review-tracks` sibling
+  endpoint applies a change to every detection across N tracks in one call.
+- `track_audits` ledger + `track_audit_reason` enum (Alembic 007). The
+  existing `audit_reason` enum is unchanged.
+- `vd.backfill_tracks(clip_id?, limit)` worker task — sweep or per-clip;
+  deletes unreviewed model detections, flips frames back to pending, and
+  reschedules `vd.detect_and_track_clip`. Surfaced on `/system` (count + a
+  sweep button) and on each clip page (per-clip backfill).
+- Track-aware YOLO fine-tune dataset dedup: one detection per
+  `(track_id, class_id)` so a 30-frame walk-through doesn't bias the loss.
+- `/labeling/tracks` tab + per-track detail view with Apply / Split / Merge /
+  Delete; on-canvas `track <short_id>` chip in the per-frame editor; new SSE
+  events `clip.tracks_updated` / `track.updated` / `track.split` /
+  `track.merged` / `track.deleted` wired into `useLiveEvents`.
+- `GET /api/metrics/tracks` + a Track-accuracy line chart on `/metrics`.
+
+**Done when:** open `/labeling/tracks`, pick a clip, label a track once and
+every member updates; split/merge bring a misassigned track into line; the
+`/metrics` track panel ticks up; pre-Phase-9 clips get tracks via the
+`/system` sweep.
 
 ## Cross-cutting workstreams
 

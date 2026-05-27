@@ -321,6 +321,41 @@ same-host LAN.
   `{updated, skipped, audits_written, affected_frame_ids}`; publishes one
   `frame.updated` SSE per affected frame and best-effort triggers training.
 
+- `POST /labeling/bulk-review-tracks` — body `{track_ids:[uuid], class_id?,
+  subclass_id?, reviewed?}`. Same semantics as `bulk-review` but the unit of
+  work is a track: each track row updates plus per-detection audits land for
+  every member that actually changed. Skips tracks where the chosen sub-class
+  belongs to a different class than the track's (unless `class_id` overrides).
+  Returns `{updated_tracks, updated_detections, skipped_tracks, audits_written,
+  affected_frame_ids, affected_track_ids}`; publishes one `track.updated` per
+  changed track and one `frame.updated` per affected frame.
+
+### Tracks *(Phase 9 Stage B)*
+- `GET /clips/{clip_id}/tracks` — every live track for a clip ordered by
+  `first_frame_index`. Returns `TrackRead[]` (track header — no member detections).
+- `GET /tracks/{id}` — `{track: TrackRead, members: TrackMember[]}` ordered
+  by `frame_index`.
+- `PATCH /tracks/{id}` — body `{class_id?, subclass_id?, reviewed?}`. Applies
+  the change to the track row, writes the matching `TrackAudit` rows
+  (`user_reassign` and/or `user_review`), and fans out to every live member
+  detection: per-detection `user_reassign` / `user_review` audits land in
+  `detection_audits` exactly as if the user had clicked each box. Returns
+  `{track, updated_detections, audits_written, affected_frame_ids}`.
+- `POST /tracks/{id}/split` — body `{pivot_frame_index: int}`. Carves
+  detections with `frame_index >= pivot` off into a new `source='user'`
+  track (copying class/subclass from the original). Rejects with 422 if the
+  pivot would leave either half empty. Writes a `TrackAudit(reason='user_split',
+  from_track_id=original.id, pivot_frame_index, n_detections_moved)` on the
+  **new** track. Publishes `track.split`. Returns the new track's full detail.
+- `POST /tracks/{id}/merge` — body `{other_track_id: uuid}`. Reassigns every
+  detection of `other` to this track, soft-deletes `other`, and writes a
+  `TrackAudit(reason='user_merge', from_track_id=other.id, n_detections_moved)`.
+  Rejects with 422 if the two tracks belong to different clips, different
+  classes, or their frame ranges overlap. Publishes `track.merged`.
+- `DELETE /tracks/{id}` — soft-delete the track. Cascade soft-deletes every
+  live member detection (with `DetectionAudit(reason='user_delete')` per
+  member) plus a `TrackAudit(reason='user_delete')`. Publishes `track.deleted`.
+
 ### Clip-scoped detections
 - `GET /clips/{id}/detections?class_id=&subclass_id=&include=&limit=` — every
   non-deleted detection in this clip, ordered by `frame_index` then
@@ -362,6 +397,12 @@ same-host LAN.
 - `GET /metrics/summary` — dashboard tiles (counts, last 7d accuracy).
 - `GET /metrics/changes?limit=` — recent class/sub-class reassignments (the
   "what changed" panel) from `detection_audits`.
+- `GET /metrics/tracks?bucket=day|week&from=&to=&class_id=&model_version_id=`
+  — track-level top-1 accuracy time series. A track "counts" once it has
+  `reviewed=true`; the model's prediction is `tracks.predicted_class_id` /
+  `predicted_subclass_id` versus the current (user-confirmed) values.
+  Filtered to `source='tracker'` (user-created tracks via split have no
+  model prediction to score).
 
 ### Settings *(Phase 7 — implemented)*
 - `GET /settings` — list overridable tunables: effective value, env default, type.
@@ -370,6 +411,15 @@ same-host LAN.
 - Overrides overlay env defaults via `vd_db.load_effective_settings`, which
   worker/API jobs call per task — edits take effect with no restart. Only the
   `vd_settings.OVERRIDABLE_KEYS` tunables are editable; paths/URLs stay env-only.
+
+- `GET /system/backfill-tracks` — count of pre-Phase-9 clips (have
+  detections, no live track). Phase 9 Stage B; surfaced on `/system`.
+- `POST /system/backfill-tracks` — body `{limit}` — enqueue
+  `vd.backfill_tracks(limit)` to sweep that many clips into the tracking
+  pipeline.
+- `POST /clips/{clip_id}/backfill-tracks` — targeted variant; enqueues
+  `vd.backfill_tracks(clip_id, 1)` for one clip. Idempotent (the worker
+  skips clips that already have a live track).
 
 ### System *(Phase 7 — `disk`/`purge-frames` implemented)*
 - `GET /system/health` — DB+Redis+models reachable?

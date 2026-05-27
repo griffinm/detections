@@ -25,6 +25,7 @@ class DetectionRead(BaseModel):
     predicted_class_id: uuid.UUID | None
     predicted_subclass_id: uuid.UUID | None
     model_version_id: uuid.UUID | None
+    track_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
 

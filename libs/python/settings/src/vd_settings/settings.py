@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     webhook_timeout_sec: float = 10.0
     webhook_max_attempts: int = 5
 
+    # tracking — Ultralytics ships `botsort.yaml` and `bytetrack.yaml` by name;
+    # a custom path is also accepted (passed straight to model.track(tracker=…)).
+    tracker: str = "botsort.yaml"
+
 
 # Settings the owner may retune at runtime via the settings_kv table (the
 # /settings page); paths, URLs, and model identity stay env-only.

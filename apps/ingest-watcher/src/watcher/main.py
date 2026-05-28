@@ -2,7 +2,12 @@ import logging
 import time
 from pathlib import Path
 
-from watchdog.events import FileClosedEvent, FileSystemEventHandler, FileSystemMovedEvent
+from watchdog.events import (
+    FileClosedEvent,
+    FileCreatedEvent,
+    FileSystemEventHandler,
+    FileSystemMovedEvent,
+)
 from watchdog.observers.polling import PollingObserver
 
 from vd_settings import Settings
@@ -20,9 +25,27 @@ def _dispatch(path: Path) -> None:
 
 
 class VideoHandler(FileSystemEventHandler):
+    def on_created(self, event: FileCreatedEvent) -> None:  # type: ignore[override]
+        # The primary signal under PollingObserver: it never emits `on_closed`
+        # (that's an inotify IN_CLOSE_WRITE), and it only emits `on_moved` when
+        # the upload's `.part` file happens to be captured in a snapshot before
+        # its rename. A fast upload writes the `.part` and renames it to the
+        # final video name within a single poll interval, so the poller never
+        # sees the `.part` — it just sees the finished video appear, i.e. a
+        # create event. Without this handler those uploads are silently dropped.
+        # The `.part` file itself is ignored here by its non-video suffix.
+        if event.is_directory:
+            return
+        path = Path(str(event.src_path))
+        if path.suffix.lower() not in VIDEO_EXTENSIONS:
+            return
+        _dispatch(path)
+
     def on_closed(self, event: FileClosedEvent) -> None:  # type: ignore[override]
         # IN_CLOSE_WRITE — a file written and closed in place (e.g. `cp`, or a
-        # browser upload streamed straight to its final name).
+        # browser upload streamed straight to its final name). Only fires under
+        # the inotify-backed Observer; kept for that fallback. `vd.ingest_video`
+        # is idempotent (SHA dedup), so overlap with `on_created` is harmless.
         if event.is_directory:
             return
         path = Path(str(event.src_path))

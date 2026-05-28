@@ -477,7 +477,7 @@ Tiny standalone process. Implementation:
 # apps/ingest-watcher/src/watcher.py
 import time
 from pathlib import Path
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 from celery import Celery
 from vd_settings import Settings
@@ -488,22 +488,24 @@ celery_app = Celery(broker=settings.redis_url)
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
 
 class Handler(FileSystemEventHandler):
-    def on_closed(self, event):       # IN_CLOSE_WRITE — `cp`, direct write
+    def on_created(self, event):      # new file appeared in a poll snapshot
         path = Path(event.src_path)
         if path.suffix.lower() in VIDEO_EXTS:
             celery_app.send_task("vd.ingest_video", args=[str(path)], queue="cpu")
 
-    def on_moved(self, event):        # IN_MOVED_TO — atomic rename into inbox
+    def on_moved(self, event):        # rename caught across two snapshots
         path = Path(event.dest_path)
         if path.suffix.lower() in VIDEO_EXTS:
             celery_app.send_task("vd.ingest_video", args=[str(path)], queue="cpu")
 
+    def on_closed(self, event): ...   # inotify-only; dead under PollingObserver
+
 if __name__ == "__main__":
-    obs = Observer()
-    obs.schedule(Handler(), str(settings.inbox_dir), recursive=True)
+    obs = PollingObserver()
+    obs.schedule(Handler(), str(settings.inbox_dir), recursive=False)
     obs.start()
     # On startup, also scan for pre-existing files (idempotent enqueue):
-    for p in settings.inbox_dir.rglob("*"):
+    for p in settings.inbox_dir.glob("*"):
         if p.is_file() and p.suffix.lower() in VIDEO_EXTS:
             celery_app.send_task("vd.ingest_video", args=[str(p)], queue="cpu")
     try:
@@ -513,16 +515,25 @@ if __name__ == "__main__":
 ```
 
 Notes:
-- We listen on `on_closed`, not `on_created`, to avoid acting on a file
-  that's still being written (Linux `IN_CLOSE_WRITE`).
-- We also listen on `on_moved`: `POST /api/clips/upload` streams an upload to a
-  hidden `.part` file (which `on_closed` ignores — non-video suffix), then
-  atomically renames it to the final video name. A rename is `IN_MOVED_TO`, not
-  a close, so it would be missed without `on_moved`. The renamed file is
-  already complete, so reacting immediately is safe.
-- If `on_closed` is not available on the host's filesystem (e.g., some FUSE
-  mounts), fall back to a stable-size poll: schedule when size + mtime have
-  been unchanged for ~3 seconds.
+- **`PollingObserver`, not the inotify `Observer`.** The inbox is bind-mounted
+  from a network share (NAS); inotify does not fire for writes that originate on
+  another host. The poller stat-walks the directory each interval and synthesizes
+  events from snapshot diffs.
+- Under polling the primary signal is **`on_created`**: a newly-appeared video
+  file. `on_closed` (inotify `IN_CLOSE_WRITE`) is *never emitted* by the poller —
+  keep it only for an inotify fallback, not as the main path.
+- `on_moved` matters for `POST /api/clips/upload`, which streams to a hidden
+  `.part` file then atomically renames it to the final video name. If the
+  `.part` is captured in one snapshot and the rename in the next, the poller
+  emits a move (→ `on_moved`). If both happen within one interval — the common
+  case for small/fast uploads — the poller never sees the `.part` and just sees
+  the finished video appear, so it emits a *create* (→ `on_created`). Both
+  handlers are needed; the `.part` itself is filtered by its non-video suffix.
+  `vd.ingest_video` is idempotent (SHA dedup), so any overlap is a harmless no-op.
+- Known gap: `on_created` can in principle fire on a still-being-written file
+  for a *slow in-place copy* (not an upload — those are atomic-rename, always
+  complete). A stable-size debounce (size+mtime unchanged for ~3 s) would harden
+  this; tracked as deferred since the only producer today is the atomic upload.
 - The startup scan handles files that landed while the watcher was down.
 - The watcher schedules only on `inbox_dir`. `intake_dir` — where external
   apps write videos before calling `POST /api/jobs` — is deliberately **not**

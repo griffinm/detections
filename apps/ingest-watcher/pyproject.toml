@@ -14,6 +14,9 @@ dependencies = [
 vd-settings = { path = "../../libs/python/settings", editable = true }
 vd-tasks = { path = "../../libs/python/tasks", editable = true }
 
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

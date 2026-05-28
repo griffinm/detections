@@ -9,6 +9,15 @@ tick the relevant spec doc.
 
 ## Worker / ML
 
+- **Ingest-watcher: stable-size debounce for in-place writes** — the watcher
+  runs under `PollingObserver` and now dispatches on `on_created`, which can in
+  principle fire on a still-being-written file during a *slow in-place copy*
+  into the inbox. The only producer today is `POST /api/clips/upload`, which
+  atomic-renames (the final name only appears complete), so this is latent.
+  *Proper fix:* debounce a created/modified video until its size + mtime have
+  been stable for ~3 s before enqueuing. *Where:*
+  `apps/ingest-watcher/src/watcher/main.py`. (spec 05)
+
 - **CPU worker image can't be lean** — `docker/worker/Dockerfile`'s `cpu`
   target installs only `torch` (no `vd-ml`), but `worker/tasks/__init__.py`
   imports *every* task module eagerly, and the GPU task modules pull

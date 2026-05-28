@@ -202,3 +202,87 @@ async def test_clip_class_summary(client, session):  # type: ignore[no-untyped-d
 async def test_clip_detections_404_for_missing_clip(client):  # type: ignore[no-untyped-def]
     resp = await client.get(f"/api/clips/{uuid.uuid4()}/detections")
     assert resp.status_code == 404
+
+
+async def test_clip_overlay_returns_lean_shape_ordered_by_frame(  # type: ignore[no-untyped-def]
+    client, session,
+):
+    """The overlay endpoint feeds the in-app player: per-detection frame_index
+    and track_id, no image URLs."""
+    clip, dets, person, car = await _seed_clip_with_detections(session, frame_count=3)
+    resp = await client.get(f"/api/clips/{clip.id}/overlay")
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == len(dets)
+    assert [i["frame_index"] for i in items] == [0, 1, 2]
+    assert [i["class_id"] for i in items] == [
+        str(person), str(person), str(car),
+    ]
+    # Lean shape: only the fields the player needs.
+    assert set(items[0].keys()) == {
+        "frame_index", "bbox", "class_id", "subclass_id",
+        "track_id", "confidence_class",
+    }
+
+
+async def test_clip_overlay_404_for_missing_clip(client):  # type: ignore[no-untyped-def]
+    resp = await client.get(f"/api/clips/{uuid.uuid4()}/overlay")
+    assert resp.status_code == 404
+
+
+async def test_clip_video_streams_file_with_range_support(  # type: ignore[no-untyped-def]
+    client, session, tmp_path: Path,
+):
+    """The player needs `Accept-Ranges: bytes` (for seek) and a video/* MIME
+    type. Starlette's FileResponse provides both for free."""
+    video = tmp_path / "v.mp4"
+    payload = b"\x00\x01\x02\x03\x04\x05" * 2048  # 12 KiB
+    video.write_bytes(payload)
+    clip = Clip(
+        filename="v.mp4", original_path="/in/v.mp4", final_path=str(video),
+        sha256=uuid.uuid4().hex, size_bytes=len(payload), status="done",
+    )
+    session.add(clip)
+    await session.commit()
+
+    head = await client.head(f"/api/clips/{clip.id}/video")
+    assert head.status_code == 200
+    assert head.headers.get("accept-ranges") == "bytes"
+    assert head.headers["content-type"].startswith("video/")
+
+    ranged = await client.get(
+        f"/api/clips/{clip.id}/video", headers={"Range": "bytes=0-1023"},
+    )
+    assert ranged.status_code == 206
+    assert len(ranged.content) == 1024
+    assert ranged.content == payload[:1024]
+
+
+async def test_clip_video_404_when_final_path_missing(  # type: ignore[no-untyped-def]
+    client, session,
+):
+    """A clip whose source file was purged still has a row, but the player
+    endpoint must surface that the bytes are gone."""
+    clip = Clip(
+        filename="v.mp4", original_path="/in/v.mp4", final_path=None,
+        sha256=uuid.uuid4().hex, size_bytes=1, status="done",
+    )
+    session.add(clip)
+    await session.commit()
+
+    resp = await client.get(f"/api/clips/{clip.id}/video")
+    assert resp.status_code == 404
+
+
+async def test_clip_video_404_when_file_gone(  # type: ignore[no-untyped-def]
+    client, session,
+):
+    clip = Clip(
+        filename="v.mp4", original_path="/in/v.mp4",
+        final_path="/nonexistent/v.mp4",
+        sha256=uuid.uuid4().hex, size_bytes=1, status="done",
+    )
+    session.add(clip)
+    await session.commit()
+    resp = await client.get(f"/api/clips/{clip.id}/video")
+    assert resp.status_code == 404

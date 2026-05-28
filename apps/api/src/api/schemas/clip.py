@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from api.schemas.detection import Bbox
+
 
 class ClipDetectionGroup(BaseModel):
     """One (class, sub-class) bucket of non-deleted detections on a clip.
@@ -56,3 +58,19 @@ class ClipClassSummary(BaseModel):
     class_id: uuid.UUID | None
     class_name: str | None
     count: int
+
+
+class ClipOverlayDetection(BaseModel):
+    """Lean detection record for the clip player's bbox overlay.
+
+    Lighter than `DetectionGalleryItem` — no image URLs, no review state —
+    but carries the two fields the gallery shape omits: `frame_index` (for
+    `currentTime → frame` mapping at playback) and `track_id` (so tracked
+    objects can keep the same colour and label across seconds)."""
+
+    frame_index: int
+    bbox: Bbox
+    class_id: uuid.UUID | None
+    subclass_id: uuid.UUID | None
+    track_id: uuid.UUID | None
+    confidence_class: float | None

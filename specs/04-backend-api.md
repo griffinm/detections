@@ -131,6 +131,19 @@ All paths prefixed with `/api`. List endpoints use cursor pagination — see
   extraction + detection (`vd.reextract_frames`). 409 if the source video is no
   longer on disk; otherwise 202, with the clip's status returning to
   `extracting`. The same SSE event train as a fresh ingest drives the UI.
+- `GET /clips/{id}/video` — stream the source video at `clip.final_path` for
+  the in-app player. Returns a `FileResponse` so `Accept-Ranges: bytes` and
+  HTTP `Range` requests work for `<video>`-element seeking. `Content-Type` is
+  set from the file suffix (defaults to `video/mp4`); the bytes are served
+  as-is — HEVC clips rely on the browser's hardware decoder, no transcoding.
+  404 when the clip has no `final_path` or the file has been purged.
+- `GET /clips/{id}/overlay` — flat list of every non-deleted detection on the
+  clip, lean shape `{frame_index, bbox, class_id, subclass_id, track_id,
+  confidence_class}`. Ordered by `frame_index`, then `created_at`. Distinct
+  from `/detections` (gallery shape with image/crop URLs, capped at 2000):
+  drops the URLs and exposes `frame_index` + `track_id`, so the player can
+  map `video.currentTime` to a frame and keep a stable colour per tracked
+  object across seconds. No pagination — one query per modal open.
 
 ### Jobs *(external integration — see spec 02 §External video submission)*
 

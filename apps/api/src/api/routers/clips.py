@@ -1,9 +1,11 @@
+import mimetypes
 import os
 import re
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,10 +14,11 @@ from api.schemas.clip import (
     ClipClassSummary,
     ClipDetail,
     ClipDetectionGroup,
+    ClipOverlayDetection,
     ClipRead,
 )
 from api.schemas.common import Paginated
-from api.schemas.detection import DetectionGalleryItem
+from api.schemas.detection import Bbox, DetectionGalleryItem
 from api.schemas.frame import FrameRead
 from api.schemas.tracks import TrackRead
 from api.services.gallery import GalleryInclude, query_gallery_items
@@ -326,6 +329,96 @@ async def list_clip_detections(
         sort="frame_asc",
         limit=limit,
     )
+
+
+@router.get("/{clip_id}/video")
+async def get_clip_video(
+    clip_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """Stream the source video for the in-app player.
+
+    Returns the file at `clip.final_path` via Starlette's `FileResponse`,
+    which already emits `Accept-Ranges: bytes` and serves `Range` requests
+    — what the `<video>` element needs for seeking. Plays back whatever
+    codec the bytes are encoded in; HEVC clips rely on the browser's
+    hardware decoder.
+    """
+    clip = await db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    if clip.final_path is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Source video is not on disk for this clip.",
+        )
+    path = Path(clip.final_path)
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Source video file is missing on disk.",
+        )
+
+    # Container is always MP4-family for our pipeline (ingest moves the
+    # original; compress writes HEVC in the same container). Fall back to
+    # mimetypes for anything unusual.
+    media_type, _ = mimetypes.guess_type(path.name)
+    if media_type is None or not media_type.startswith("video/"):
+        media_type = "video/mp4"
+
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type="inline",
+    )
+
+
+@router.get("/{clip_id}/overlay", response_model=list[ClipOverlayDetection])
+async def get_clip_overlay(
+    clip_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[ClipOverlayDetection]:
+    """All non-deleted detections on this clip, lean shape for the player overlay.
+
+    Distinct from `/detections` (gallery shape with image/crop URLs, capped
+    at 2000): this one drops the URLs and adds `frame_index` + `track_id`,
+    which the player needs to map `video.currentTime` to a frame and to
+    keep a stable colour per tracked object.
+    """
+    clip = await db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    rows = (
+        await db.execute(
+            select(
+                Frame.frame_index,
+                DetectionModel.bbox,
+                DetectionModel.class_id,
+                DetectionModel.subclass_id,
+                DetectionModel.track_id,
+                DetectionModel.confidence_class,
+            )
+            .join(Frame, Frame.id == DetectionModel.frame_id)
+            .where(
+                Frame.clip_id == clip_id,
+                DetectionModel.deleted_at.is_(None),
+            )
+            .order_by(Frame.frame_index, DetectionModel.created_at)
+        )
+    ).all()
+    return [
+        ClipOverlayDetection(
+            frame_index=frame_index,
+            bbox=Bbox(**bbox),
+            class_id=class_id,
+            subclass_id=subclass_id,
+            track_id=track_id,
+            confidence_class=confidence_class,
+        )
+        for frame_index, bbox, class_id, subclass_id, track_id, confidence_class in rows
+    ]
 
 
 @router.get("/{clip_id}/class-summary", response_model=list[ClipClassSummary])

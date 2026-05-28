@@ -308,6 +308,23 @@ any open `frames/:id`
 queries via the response's `affected_frame_ids`); SSE handles open frame
 views in real time.
 
+### Clip player (read-only) — `/clips` row → modal
+
+Not a labeling surface, but it consumes the same detection data, so it is
+called out here for cross-reference. Clicking a `done` clip's thumbnail on
+`/clips` opens a modal with a `<video>` element bound to `GET
+/clips/{id}/video` plus an absolutely-positioned bbox overlay driven by
+`GET /clips/{id}/overlay` + the existing `/clips/{id}/frames`. On every
+`requestAnimationFrame` while playing, the overlay finds the latest frame
+whose `timestamp_sec <= currentTime` (binary search; robust to non-1.0
+`VD_FRAME_FPS`) and renders that frame's detections, scaled to the
+letterboxed video rect from a `ResizeObserver`. Box colour is a
+deterministic HSL hash of `track_id` so tracked objects keep the same hue
+across seconds; non-tracked detections fall back to class colour. Class
+filter chips at the top toggle which classes are visible. The modal is
+view-only — corrections continue to flow through the labeling UI so they
+hit `detection_audits`.
+
 ### Out of scope (deferred)
 
 - **Undo for bulk apply.** The per-detection undo ring buffer is local to a

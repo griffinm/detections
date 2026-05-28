@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2, Upload } from "lucide-react";
+import { Play, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { ClipPlayerModal } from "@/components/clips/ClipPlayerModal";
 import { ClipUploadList } from "@/components/ClipUploadList";
 import { ClassBadge } from "@/components/domain/ClassBadge";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -17,6 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { formatBytes, formatClipName, formatDuration } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import {
   type Clip,
   type ClipDetectionGroup,
@@ -109,10 +111,19 @@ function DeleteClipButton({ clip }: { clip: Clip }) {
   );
 }
 
-function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
+function ClipRow({
+  clip,
+  onClick,
+  onPlay,
+}: {
+  clip: Clip;
+  onClick: () => void;
+  onPlay: () => void;
+}) {
   const ingestedAt = clip.ingested_at
     ? new Date(clip.ingested_at).toLocaleString()
     : "—";
+  const playable = clip.status === "done";
 
   return (
     <tr
@@ -120,16 +131,40 @@ function ClipRow({ clip, onClick }: { clip: Clip; onClick: () => void }) {
       onClick={onClick}
     >
       <td className="px-4 py-3">
-        {clip.thumbnail_url ? (
-          <img
-            src={clip.thumbnail_url}
-            alt=""
-            loading="lazy"
-            className="h-10 w-16 rounded bg-muted object-cover"
-          />
-        ) : (
-          <div className="h-10 w-16 rounded bg-muted" aria-hidden />
-        )}
+        <button
+          type="button"
+          className={cn(
+            "group relative block h-10 w-16 overflow-hidden rounded bg-muted",
+            playable
+              ? "cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring"
+              : "cursor-default",
+          )}
+          aria-label={
+            playable ? `Play ${formatClipName(clip.created_at)}` : "Video not ready"
+          }
+          title={playable ? "Play with detections" : "Video not ready yet"}
+          disabled={!playable}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (playable) onPlay();
+          }}
+        >
+          {clip.thumbnail_url ? (
+            <img
+              src={clip.thumbnail_url}
+              alt=""
+              loading="lazy"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="h-full w-full" aria-hidden />
+          )}
+          {playable && (
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/40">
+              <Play className="h-4 w-4 fill-white text-white opacity-0 transition-opacity group-hover:opacity-100" />
+            </span>
+          )}
+        </button>
       </td>
       <td className="max-w-[280px] truncate px-4 py-3 text-sm font-medium">
         {formatClipName(clip.created_at)}
@@ -173,6 +208,12 @@ export function ClipsList() {
   const { data, isPending, isError } = useClipsList();
   const { uploads, start, dismiss } = useClipUploads();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [playingClip, setPlayingClip] = useState<{
+    id: string;
+    name: string;
+    width: number | null;
+    height: number | null;
+  } | null>(null);
 
   const onFilesPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -250,11 +291,26 @@ export function ClipsList() {
                 key={clip.id}
                 clip={clip}
                 onClick={() => navigate(`/clips/${clip.id}`)}
+                onPlay={() =>
+                  setPlayingClip({
+                    id: clip.id,
+                    name: formatClipName(clip.created_at),
+                    width: clip.width,
+                    height: clip.height,
+                  })
+                }
               />
             ))}
           </tbody>
         </table>
       </div>
+
+      <ClipPlayerModal
+        clip={playingClip}
+        onOpenChange={(open) => {
+          if (!open) setPlayingClip(null);
+        }}
+      />
     </div>
   );
 }

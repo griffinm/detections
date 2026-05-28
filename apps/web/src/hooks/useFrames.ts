@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type Bbox } from "./useFrame";
 import { type ClipDetail } from "./useClips";
 
 export interface Frame {
@@ -15,6 +16,15 @@ export interface Frame {
   created_at: string;
 }
 
+export interface ClipOverlayDetection {
+  frame_index: number;
+  bbox: Bbox;
+  class_id: string | null;
+  subclass_id: string | null;
+  track_id: string | null;
+  confidence_class: number | null;
+}
+
 export function useClip(id: string) {
   return useQuery<ClipDetail>({
     queryKey: ["clips", id],
@@ -27,7 +37,7 @@ export function useClip(id: string) {
   });
 }
 
-export function useClipFrames(id: string) {
+export function useClipFrames(id: string, enabled = true) {
   return useQuery<Frame[]>({
     queryKey: ["clips", id, "frames"],
     queryFn: async () => {
@@ -35,7 +45,23 @@ export function useClipFrames(id: string) {
       if (!res.ok) throw Object.assign(new Error("Failed to fetch frames"), { status: res.status });
       return res.json() as Promise<Frame[]>;
     },
-    enabled: Boolean(id),
+    enabled: enabled && Boolean(id),
+    staleTime: 30_000,
+  });
+}
+
+export function useClipOverlay(id: string, enabled = true) {
+  return useQuery<ClipOverlayDetection[]>({
+    queryKey: ["clips", id, "overlay"],
+    queryFn: async () => {
+      const res = await fetch(`/api/clips/${id}/overlay`);
+      if (!res.ok)
+        throw Object.assign(new Error("Failed to fetch overlay detections"), {
+          status: res.status,
+        });
+      return res.json() as Promise<ClipOverlayDetection[]>;
+    },
+    enabled: enabled && Boolean(id),
     staleTime: 30_000,
   });
 }

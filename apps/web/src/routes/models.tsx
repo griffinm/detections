@@ -1,9 +1,32 @@
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
-import { useActivateModel, useModels, type ModelVersion } from "@/hooks/useModels";
+import { TableSentinelRow } from "@/components/ui/InfiniteScrollSentinel";
+import { cn } from "@/lib/utils";
+import {
+  useActivateModel,
+  useModelsInfinite,
+  type ModelKindFilter,
+  type ModelVersion,
+} from "@/hooks/useModels";
+
+type KindFilter = "all" | ModelKindFilter;
+type StatusFilter = "all" | "active" | "inactive";
+
+const KIND_FILTERS: { value: KindFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "yolo", label: "YOLO" },
+  { value: "insightface", label: "InsightFace" },
+  { value: "classifier", label: "Classifier" },
+];
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "inactive", label: "Inactive" },
+];
 
 interface PerClassEntry {
   class: string;
@@ -51,6 +74,38 @@ function statusPill(status: PerClassEntry["status"]): string {
   if (status === "pass") return "text-green-600";
   if (status === "fail") return "text-destructive";
   return "text-muted-foreground";
+}
+
+function SegmentedFilter<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-input">
+      {options.map((o, i) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "px-2.5 py-1 text-xs transition-colors",
+            i === 0 && "rounded-l-md",
+            i === options.length - 1 && "rounded-r-md",
+            value === o.value
+              ? "bg-accent text-accent-foreground"
+              : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function RegressionPanel({ check }: { check: RegressionCheck }) {
@@ -191,9 +246,33 @@ function ModelDetail({ model }: { model: ModelVersion }) {
 }
 
 export function ModelsPage() {
-  const { data: models = [], isPending } = useModels();
-  const activate = useActivateModel();
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [open, setOpen] = useState<Set<string>>(new Set());
+
+  const filters = useMemo(
+    () => ({
+      kind: kindFilter === "all" ? undefined : kindFilter,
+      is_active:
+        statusFilter === "all"
+          ? undefined
+          : statusFilter === "active",
+    }),
+    [kindFilter, statusFilter],
+  );
+
+  const {
+    rows: models,
+    total,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    isPending,
+  } = useModelsInfinite(filters);
+
+  const activate = useActivateModel();
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const loadMore = useMemo(() => () => void fetchNextPage(), [fetchNextPage]);
 
   const toggle = (id: string) =>
     setOpen((s) => {
@@ -212,12 +291,37 @@ export function ModelsPage() {
     }
   };
 
+  const filtersActive = kindFilter !== "all" || statusFilter !== "all";
+
   return (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-4">
       <PageHeader
         title="Models"
         description="YOLO detectors and sub-class classifiers. One version per kind is active."
       />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            Kind
+          </span>
+          <SegmentedFilter
+            value={kindFilter}
+            options={KIND_FILTERS}
+            onChange={setKindFilter}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            Status
+          </span>
+          <SegmentedFilter
+            value={statusFilter}
+            options={STATUS_FILTERS}
+            onChange={setStatusFilter}
+          />
+        </div>
+      </div>
 
       {isPending ? (
         <div className="space-y-1.5">
@@ -226,11 +330,18 @@ export function ModelsPage() {
           ))}
         </div>
       ) : models.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No model versions yet.</p>
+        <p className="text-sm text-muted-foreground">
+          {filtersActive
+            ? "No models match the current filters."
+            : "No model versions yet."}
+        </p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div
+          ref={tableScrollRef}
+          className="min-h-0 flex-1 overflow-auto rounded-lg border border-border"
+        >
           <table className="w-full min-w-[640px] text-sm">
-            <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+            <thead className="sticky top-0 z-10 bg-muted/95 text-left text-xs uppercase text-muted-foreground backdrop-blur">
               <tr>
                 <th className="w-8 px-3 py-2" />
                 <th className="px-3 py-2 font-medium">Name</th>
@@ -308,6 +419,25 @@ export function ModelsPage() {
                   </Fragment>
                 );
               })}
+              <TableSentinelRow
+                colSpan={7}
+                hasMore={hasNextPage}
+                isFetching={isFetchingNextPage}
+                onLoadMore={loadMore}
+                rootRef={tableScrollRef}
+              >
+                {isFetchingNextPage ? (
+                  <div className="flex items-center justify-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Loading more…
+                  </div>
+                ) : !hasNextPage ? (
+                  <div className="px-3 py-2 text-center text-[11px] text-muted-foreground">
+                    End of results — {total.toLocaleString()}{" "}
+                    {total === 1 ? "model" : "models"} total
+                  </div>
+                ) : null}
+              </TableSentinelRow>
             </tbody>
           </table>
         </div>

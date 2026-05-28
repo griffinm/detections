@@ -8,27 +8,48 @@ class-index sync are enforced identically wherever a model is activated.
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
+from api.schemas.common import Paginated
 from api.schemas.model import ModelVersionRead
 from api.services.events import publish
+from api.utils.pagination import CursorPage, apply_keyset, build_page, cursor_params
 from vd_db import activate_model_version
 from vd_db.models import ModelVersion
 
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-@router.get("", response_model=list[ModelVersionRead])
+@router.get("", response_model=Paginated[ModelVersionRead])
 async def list_models(
     kind: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+    page: CursorPage = Depends(cursor_params),
     db: AsyncSession = Depends(get_db),
-) -> list[ModelVersion]:
-    query = select(ModelVersion).order_by(ModelVersion.created_at.desc())
+) -> Paginated[ModelVersionRead]:
+    base = select(ModelVersion)
     if kind is not None:
-        query = query.where(ModelVersion.kind == kind)
-    return list(await db.scalars(query))
+        base = base.where(ModelVersion.kind == kind)
+    if is_active is not None:
+        base = base.where(ModelVersion.is_active.is_(is_active))
+
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+
+    query = apply_keyset(
+        base, ModelVersion.created_at, ModelVersion.id, page.cursor, direction="desc"
+    ).limit(page.limit + 1)
+    rows = list(await db.scalars(query))
+
+    return build_page(
+        rows,
+        sort_attr="created_at",
+        id_attr="id",
+        limit=page.limit,
+        total=total,
+        item_cls=ModelVersionRead,
+    )
 
 
 @router.post("/{model_id}/activate", response_model=ModelVersionRead)

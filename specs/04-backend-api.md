@@ -387,7 +387,10 @@ same-host LAN.
   filter to the dominant subject in the clip.
 
 ### Models + training
-- `GET /models?kind=` — list versions.
+- `GET /models?kind=&is_active=&cursor=&limit=` — list versions,
+  cursor-paginated (`Paginated[ModelVersionRead]`). `kind` filters on the
+  `model_kind` enum (`yolo` / `insightface` / `classifier`); `is_active`
+  is a bool.
 - `POST /models/{id}/activate` — switch active weights.
 - `POST /training-runs` — body: `{ kind, target_class_id? }` — enqueues a job.
 - `GET /training-runs?status=&kind=&cursor=&limit=` — list, cursor-paginated

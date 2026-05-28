@@ -225,9 +225,36 @@ async def _detect_and_track_clip_async(clip_id: str) -> int:
     return len(frames)
 
 
+async def _mark_clip_failed(clip_id: str, error: str) -> None:
+    """Record a terminal detection failure on the clip and notify any external
+    submitter.
+
+    Without this a clip whose detection can't proceed — e.g. the active model's
+    weights file is missing or unreadable — retries to death and then sits in
+    `detecting` forever with an empty `error`, indistinguishable from in-flight
+    work. Mirrors the terminal path in `vd.ingest_video`.
+    """
+    async with db_session() as session:
+        clip = await session.get(Clip, uuid.UUID(clip_id))
+        if clip is None or clip.status == "done":
+            return
+        clip.status = "failed"
+        clip.error = error[:2000]
+        callback_url = clip.callback_url
+        await session.commit()
+    await publish("clip.status", clip_id=clip_id, status="failed")
+    if callback_url:
+        celery_app.send_task(
+            "vd.deliver_callback", args=[clip_id, "clip.failed"], queue="cpu"
+        )
+
+
 @celery_app.task(name="vd.detect_and_track_clip", bind=True, max_retries=3)
 def detect_and_track_clip(self, clip_id: str) -> int:  # type: ignore[misc]
     try:
         return asyncio.run(_detect_and_track_clip_async(clip_id))
     except Exception as exc:
-        raise self.retry(exc=exc, countdown=10) from exc
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=10) from exc
+        asyncio.run(_mark_clip_failed(clip_id, str(exc)))
+        raise

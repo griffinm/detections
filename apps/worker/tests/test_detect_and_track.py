@@ -174,3 +174,35 @@ async def test_detect_and_track_is_idempotent(  # type: ignore[no-untyped-def]
     assert await _detect_and_track_clip_async(str(clip.id)) == 0
     assert len(list(await session.scalars(select(DetectionModel)))) == 1
     assert len(list(await session.scalars(select(Track)))) == 1
+
+
+async def test_mark_clip_failed_records_error_and_fires_callback(  # type: ignore[no-untyped-def]
+    session, frames_dir, capture_io,
+):
+    clip, _ = await _seed(session, frames_dir, n_frames=1)
+    clip.callback_url = "http://upstream/cb"
+    await session.commit()
+
+    await detect_mod._mark_clip_failed(str(clip.id), "boom")
+
+    await session.refresh(clip)
+    assert clip.status == "failed"
+    assert clip.error == "boom"
+    assert ("clip.status", {"clip_id": str(clip.id), "status": "failed"}) in capture_io.events
+    assert ("vd.deliver_callback", [str(clip.id), "clip.failed"]) in capture_io.enqueued
+
+
+async def test_mark_clip_failed_leaves_done_clip_untouched(  # type: ignore[no-untyped-def]
+    session, frames_dir, capture_io,
+):
+    # A late terminal failure must not clobber a clip that already completed.
+    clip, _ = await _seed(session, frames_dir, n_frames=1)
+    clip.status = "done"
+    await session.commit()
+
+    await detect_mod._mark_clip_failed(str(clip.id), "late error")
+
+    await session.refresh(clip)
+    assert clip.status == "done"
+    assert clip.error is None
+    assert not any(name == "vd.deliver_callback" for name, _ in capture_io.enqueued)

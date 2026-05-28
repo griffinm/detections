@@ -166,6 +166,13 @@ Idempotency: detections are inserted only for frames whose `detect_status`
 is still `pending`, so a re-run picks up where the previous attempt left off.
 The `status='detecting'` guard on the clip update prevents double completion.
 
+Terminal failure: an exception retries up to `max_retries`; once exhausted the
+task sets the clip to `status='failed'` with the error message and fires a
+`clip.failed` callback (same terminal path as `vd.ingest_video`). Otherwise a
+clip whose detection can never succeed — e.g. the active model's weights file
+is missing — would sit in `detecting` forever with an empty `error`,
+indistinguishable from in-flight work.
+
 Tracker scope: tracks live within one clip. Re-extracting a clip wipes its
 tracks (see `vd.reextract_frames`); no cross-clip tracker state is kept.
 

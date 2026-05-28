@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 
 from watchdog.events import FileClosedEvent, FileSystemEventHandler, FileSystemMovedEvent
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 
 from vd_settings import Settings
 from vd_tasks.app import celery_app
@@ -59,7 +59,11 @@ def main() -> None:
 
     logger.info("Watching %s", inbox)
     handler = VideoHandler()
-    observer = Observer()
+    # PollingObserver, not the default inotify-backed Observer: the inbox is
+    # bind-mounted from a network share, and inotify does not fire for writes
+    # originating on other hosts. Polling stat-walks the directory and
+    # synthesizes events, which works on every filesystem.
+    observer = PollingObserver()
     observer.schedule(handler, str(inbox), recursive=False)
     observer.start()
 

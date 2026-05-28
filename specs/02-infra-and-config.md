@@ -291,6 +291,19 @@ The GPU worker container sets `INSIGHTFACE_HOME=/data/models/insightface` and
 `HF_HOME=/data/models/hf` so InsightFace and DINOv2 weights download once onto
 the mounted `models/` volume rather than on every container start.
 
+### Network-mounted `data/` (NAS)
+
+The host paths above can point at a network share (NFS/SMB) rather than local
+disk. One caveat: the ingest watcher uses a **polling** observer, not the
+default inotify-backed one. Inotify is kernel-local and does not receive
+events for writes that originate on another host, so an inotify watcher on a
+NAS-backed inbox sits silent while files pile up. The polling observer
+(`watchdog.observers.polling.PollingObserver`) stat-walks the inbox and
+synthesizes events, which works on every filesystem. See
+`apps/ingest-watcher/src/watcher/main.py`. The trade-off is one `stat()` per
+file per poll interval on the inbox — negligible for a directory that's
+emptied on success.
+
 ## External video submission
 
 Two upstream apps (a UniFi Protect motion archiver and a family-video archiver)

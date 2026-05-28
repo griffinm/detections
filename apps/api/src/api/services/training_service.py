@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import enqueue
 from vd_db import load_effective_settings
-from vd_db.models import DetectionModel, ModelVersion, TrainingRun
+from vd_db.models import Class, DetectionModel, ModelVersion, TrainingRun
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,22 @@ async def maybe_trigger_classifier(db: AsyncSession, class_id: uuid.UUID) -> Non
     ):
         return
 
+    # Mirror `_collect_examples` in `worker/tasks/train_subclass_classifier.py`:
+    # person classifiers train on the face embedding, everything else on the
+    # object embedding. Counting rows without the relevant embedding here would
+    # let `labeled` permanently outrun what training can actually consume —
+    # `trained_on` would never close the gap and every label would re-trigger.
+    cls = await db.get(Class, class_id)
+    use_face = cls is not None and cls.name == "person"
+    emb_col = (
+        DetectionModel.face_embedding if use_face else DetectionModel.object_embedding
+    )
     labeled_filter = (
         DetectionModel.class_id == class_id,
         DetectionModel.deleted_at.is_(None),
         DetectionModel.subclass_id.is_not(None),
         DetectionModel.reviewed.is_(True),
+        emb_col.is_not(None),
     )
     labeled = (
         await db.scalar(

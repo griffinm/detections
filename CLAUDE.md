@@ -45,6 +45,7 @@ shifts. Specs must not silently fall out of sync with code.
 | `specs/08-labeling-ui.md`         | Bbox canvas, hotkeys, sub-class examples              |
 | `specs/09-milestones.md`          | Phase sequencing — what to build next                 |
 | `specs/deferred.md`               | Registry of consciously deferred work + tech debt     |
+| `specs/proposals.md`              | Proposed changes under consideration — not yet committed |
 
 ## Locked-in stack
 

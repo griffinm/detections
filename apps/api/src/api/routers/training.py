@@ -6,7 +6,6 @@ The API only writes the `training_runs` row and enqueues the task on the
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -22,7 +21,9 @@ from api.schemas.training import (
 )
 from api.services.events import publish
 from api.utils.pagination import CursorPage, apply_keyset, build_page, cursor_params
+from vd_db import resolve_model_path
 from vd_db.models import TrainingRun
+from vd_settings import Settings
 
 router = APIRouter(prefix="/training-runs", tags=["training"])
 
@@ -46,7 +47,9 @@ _STATUS_BUCKETS: dict[str, tuple[str, ...]] = {
 def _log_tail(path: str | None, lines: int = 200) -> str | None:
     if not path:
         return None
-    file = Path(path)
+    # log_path is stored relative to models_dir (see vd_db.model_paths); resolve
+    # it against the current mount so a moved volume doesn't blank the log tail.
+    file = resolve_model_path(Settings().models_dir, path)
     if not file.exists():
         return None
     try:

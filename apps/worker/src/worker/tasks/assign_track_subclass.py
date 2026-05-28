@@ -19,7 +19,7 @@ import uuid
 
 from sqlalchemy import func, select
 
-from vd_db import knn_subclass, load_effective_settings
+from vd_db import knn_subclass, load_effective_settings, resolve_model_path
 from vd_db.models import (
     DetectionAudit,
     DetectionModel,
@@ -88,7 +88,9 @@ async def _assign_track_subclass_async(track_id: str) -> bool:
             if classifier_version is not None:
                 from vd_ml import load_classifier, predict_subclass
 
-                classifier = load_classifier(classifier_version.weights_path)
+                classifier = load_classifier(
+                    str(resolve_model_path(settings.models_dir, classifier_version.weights_path))
+                )
                 subclass_id_str, confidence = predict_subclass(
                     classifier, list(query_vec)
                 )

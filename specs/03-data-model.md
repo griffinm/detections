@@ -224,7 +224,7 @@ embeddings of `subclass_examples` for that class_id.
 | id             | uuid PK  |                                                      |
 | kind           | model_kind NOT NULL | enum: 'yolo','insightface','classifier'   |
 | name           | text NOT NULL | e.g. 'yolo11l-finetune-2025-01-12'              |
-| weights_path   | text NOT NULL |                                                 |
+| weights_path   | text NOT NULL | path **relative to `models_dir`** (see spec 06) |
 | target_class_id| uuid     | non-null for classifier kind                         |
 | trained_on     | int      | label count at train time                            |
 | metrics        | jsonb    | mAP, val accuracy, etc.                              |
@@ -247,7 +247,7 @@ Constraints: only one row per `kind`/`target_class_id` may have `is_active=true`
 | started_at      | timestamptz |                                                |
 | finished_at     | timestamptz |                                                |
 | metrics         | jsonb   |                                                    |
-| log_path        | text    | location of training log                           |
+| log_path        | text    | training log, relative to `models_dir` (spec 06)   |
 | error           | text    |                                                    |
 
 ```sql

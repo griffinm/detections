@@ -14,7 +14,7 @@ import uuid
 
 from sqlalchemy import select
 
-from vd_db import load_effective_settings
+from vd_db import load_effective_settings, resolve_model_path
 from vd_db.models import Class, DetectionAudit, DetectionModel, Frame, Subclass
 from vd_tasks.app import celery_app
 
@@ -58,7 +58,9 @@ async def _predict_user_detection_async(detection_id: str) -> bool:
             return False
 
         version = await get_or_register_yolo(session, settings)
-        model = load_yolo(version.weights_path)
+        model = load_yolo(
+            str(resolve_model_path(settings.models_dir, version.weights_path))
+        )
 
         kept_classes = list(
             await session.scalars(

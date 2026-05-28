@@ -263,6 +263,14 @@ Application is a post-processing step in `detect_and_track_clip`.
   the active `model_versions` row at the start of every batch, and `load_yolo`
   is an LRU cache keyed by weights path, so a newly activated model is picked
   up on the next batch (and rollback is instant — the old model stays cached).
+- `model_versions.weights_path` (and `training_runs.log_path`) are stored
+  **relative to `settings.models_dir`** via `vd_db.to_stored_path`, and resolved
+  back to an absolute path at load time with `vd_db.resolve_model_path`. The
+  models directory is a bind mount whose host path has moved (local → NAS); an
+  absolute path captured at training time would point outside the container
+  after such a move and strand the active model (it once wedged detection for
+  exactly this reason). Relative storage keeps the registry mount-independent.
+  Already-absolute values are resolved unchanged, so legacy rows keep working.
 
 ## Performance targets (rough)
 

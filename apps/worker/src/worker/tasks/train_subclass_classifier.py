@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vd_db import activate_model_version
+from vd_db import activate_model_version, to_stored_path
 from vd_db.models import (
     Class,
     DetectionModel,
@@ -128,7 +128,7 @@ async def _train_subclass_classifier_async(training_run_id: str) -> str:
         new_version = ModelVersion(
             kind="classifier",
             name=f"subclass-clf-{class_id.hex[:8]}-{run_id.hex[:8]}",
-            weights_path=str(out_path),
+            weights_path=to_stored_path(settings.models_dir, out_path),
             target_class_id=class_id,
             trained_on=result.n_train + result.n_val,
             metrics={

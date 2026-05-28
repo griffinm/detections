@@ -14,7 +14,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from vd_db import activate_model_version, load_effective_settings
+from vd_db import (
+    activate_model_version,
+    load_effective_settings,
+    resolve_model_path,
+    to_stored_path,
+)
 from vd_db.models import ModelVersion, TrainingRun
 from vd_tasks.app import celery_app
 
@@ -110,7 +115,7 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
         await session.commit()
 
         version = await get_or_register_yolo(session, settings)
-        base_weights = version.weights_path
+        base_weights = str(resolve_model_path(settings.models_dir, version.weights_path))
         prev_metrics = version.metrics or {}
 
         manifest = await build_yolo_dataset(session, settings, run_id)
@@ -198,7 +203,7 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
         new_version = ModelVersion(
             kind="yolo",
             name=f"yolo11l-ft-{run_id.hex[:8]}",
-            weights_path=result.best_weights,
+            weights_path=to_stored_path(settings.models_dir, result.best_weights),
             trained_on=manifest.counts["detections"],
             metrics={
                 "class_names": {str(i): n for i, n in enumerate(manifest.class_names)},
@@ -226,7 +231,9 @@ async def _finetune_yolo_async(training_run_id: str) -> str:
         assert run is not None
         run.status = "succeeded"
         run.finished_at = datetime.now(UTC)
-        run.log_path = str(Path(result.best_weights).parent.parent / "results.csv")
+        run.log_path = to_stored_path(
+            settings.models_dir, Path(result.best_weights).parent.parent / "results.csv"
+        )
         run.metrics = {
             "val_map50_95": result.map50_95,
             "val_map50": result.map50,

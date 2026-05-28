@@ -1,5 +1,6 @@
 from .base import Base
 from .job_result import build_job_result
+from .model_paths import resolve_model_path, to_stored_path
 from .models import (
     Class,
     Clip,
@@ -47,5 +48,7 @@ __all__ = [
     "knn_subclass",
     "load_effective_settings",
     "recount_clip_tracks",
+    "resolve_model_path",
     "set_override",
+    "to_stored_path",
 ]

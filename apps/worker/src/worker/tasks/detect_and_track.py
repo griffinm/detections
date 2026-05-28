@@ -16,7 +16,7 @@ from pathlib import Path
 
 from sqlalchemy import select, update
 
-from vd_db import load_effective_settings
+from vd_db import load_effective_settings, resolve_model_path
 from vd_db.models import (
     Class,
     Clip,
@@ -64,7 +64,9 @@ async def _detect_and_track_clip_async(clip_id: str) -> int:
         paths: list[Path] = []
         if frames:
             version = await get_or_register_yolo(session, settings)
-            model = load_yolo(version.weights_path)
+            model = load_yolo(
+                str(resolve_model_path(settings.models_dir, version.weights_path))
+            )
 
             for frame in frames:
                 if frame.path is None:

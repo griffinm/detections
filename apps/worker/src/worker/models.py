@@ -3,6 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vd_db import to_stored_path
 from vd_db.models import ModelVersion
 from vd_ml import ensure_base_weights, load_yolo
 from vd_settings import Settings
@@ -30,7 +31,7 @@ async def get_or_register_yolo(session: AsyncSession, settings: Settings) -> Mod
     version = ModelVersion(
         kind="yolo",
         name="yolo11l-coco-base",
-        weights_path=str(weights),
+        weights_path=to_stored_path(settings.models_dir, weights),
         metrics={"class_names": class_names, "source": "coco-pretrained"},
         is_active=True,
     )

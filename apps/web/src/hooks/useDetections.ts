@@ -18,8 +18,12 @@ import {
 } from "@/lib/apiDetections";
 import { useLabelingStore, type DetectionPatch } from "@/stores/labeling";
 import type { Bbox, Detection, FrameDetail } from "@/hooks/useFrame";
-import type { Paginated } from "./usePaginated";
-import type { DetectionGalleryItem } from "./useSubclasses";
+import { useCursorInfiniteQuery, type Paginated } from "./usePaginated";
+import type {
+  DetectionGalleryItem,
+  GalleryInclude,
+  GallerySort,
+} from "./useSubclasses";
 
 /**
  * Eager-save detection editing for one frame. Every edit hits the API
@@ -208,6 +212,9 @@ type GallerySnapshot = Array<[QueryKey, GalleryCache | undefined]>;
 const GALLERY_FAMILIES: ReadonlyArray<QueryKey> = [
   ["subclass-detections"],
   ["class-detections"],
+  // The Quick-review queue at `/labeling/quick` shares the same item shape and
+  // benefits from the same optimistic splice.
+  ["detections-queue"],
 ];
 
 function spliceDetectionFromGalleries(
@@ -243,11 +250,61 @@ async function invalidateDetectionGalleries(qc: QueryClient): Promise<void> {
   await Promise.all([
     qc.invalidateQueries({ queryKey: ["subclass-detections"] }),
     qc.invalidateQueries({ queryKey: ["class-detections"] }),
+    qc.invalidateQueries({ queryKey: ["detections-queue"] }),
     // Soft-delete + untag both change what shows on the Examples tab too
     // (deleted_at filter + sub-class membership), so refresh those caches.
     qc.invalidateQueries({ queryKey: ["subclass-examples"] }),
     qc.invalidateQueries({ queryKey: ["class-examples"] }),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// Quick-review queue + on-screen edits
+// ---------------------------------------------------------------------------
+
+export interface DetectionQueueParams {
+  include?: GalleryInclude;
+  sort?: GallerySort;
+  classId?: string;
+}
+
+/** Paginated infinite-scroll of detections — drives the `/labeling/quick`
+ *  one-at-a-time review screen. Default `include=auto` mirrors the backend. */
+export function useDetectionsQueue(params: DetectionQueueParams = {}) {
+  const { include = "auto", sort = "created_desc", classId } = params;
+  return useCursorInfiniteQuery<DetectionGalleryItem>({
+    queryKey: ["detections-queue", { include, sort, classId: classId ?? null }],
+    url: "/api/detections",
+    params: { include, sort, class_id: classId },
+    limit: 60,
+  });
+}
+
+/** Generic PATCH used by the Quick-review screen's class/subclass dropdowns
+ *  and the Confirm button. Optimistically splices the row out of gallery
+ *  caches *only when* `reviewed: true` is in the patch — otherwise the row
+ *  should stay visible while the user keeps tweaking the same detection. */
+export function usePatchDetection() {
+  const qc = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { id: string; patch: Parameters<typeof updateDetection>[1] },
+    { snapshot: GallerySnapshot | null }
+  >({
+    mutationFn: async ({ id, patch }) => {
+      await updateDetection(id, patch);
+    },
+    onMutate: ({ id, patch }) => ({
+      snapshot: patch.reviewed === true
+        ? spliceDetectionFromGalleries(qc, id)
+        : null,
+    }),
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.snapshot) restoreGalleries(qc, ctx.snapshot);
+    },
+    onSettled: () => invalidateDetectionGalleries(qc),
+  });
 }
 
 /** Clear `subclass_id` and mark `reviewed=true` so the next kNN sweep can't

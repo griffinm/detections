@@ -12,23 +12,54 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import enqueue, get_db
+from api.schemas.common import Paginated
 from api.schemas.detection import (
     DetectionCreate,
     DetectionRead,
     DetectionUpdate,
     PromoteExample,
 )
+from api.schemas.detection import DetectionGalleryItem
 from api.services.audits import make_audit as _audit
 from api.services.crops import ensure_crop
 from api.services.events import publish
+from api.services.gallery import GalleryInclude, GallerySort, query_gallery_page
 from api.services.training_service import maybe_trigger_training
+from api.utils.pagination import CursorPage, cursor_params, offset_from_cursor
 from vd_db.models import Class, DetectionModel, Frame, Subclass, SubclassExample
 
 router = APIRouter(prefix="/detections", tags=["detections"])
+
+
+@router.get("", response_model=Paginated[DetectionGalleryItem])
+async def list_detections(
+    include: GalleryInclude = Query(default="auto"),
+    sort: GallerySort = Query(default="created_desc"),
+    class_id: uuid.UUID | None = Query(default=None),
+    page: CursorPage = Depends(cursor_params),
+    db: AsyncSession = Depends(get_db),
+) -> Paginated[DetectionGalleryItem]:
+    """Cross-cutting detection queue used by the Quick-review labeling page.
+
+    Defaults to `include=auto` because the primary caller is the one-at-a-time
+    review flow that walks unreviewed (auto-assigned) detections. Pass
+    `class_id` to scope to a single class.
+    """
+    where = (
+        (DetectionModel.class_id == class_id) if class_id is not None else true()
+    )
+    return await query_gallery_page(
+        db,
+        where=where,
+        include=include,
+        sort=sort,
+        offset=offset_from_cursor(page.cursor),
+        limit=page.limit,
+    )
 
 
 async def _publish_frame_updated(db: AsyncSession, frame_id: uuid.UUID) -> None:

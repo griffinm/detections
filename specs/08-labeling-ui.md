@@ -172,6 +172,38 @@ params on `/api/labeling/queue`, exposed as two selectors on `/labeling`):
 Deferred: **Recent corrections** — frames near recently corrected ones, as a
 kNN over the corrected detection's embedding (`specs/deferred.md`).
 
+## Quick review (one detection at a time)
+
+`/labeling/quick` is a phone-first review surface. Where the queue at
+`/labeling` is frame-oriented, this one is **detection**-oriented: the page
+shows a single unreviewed detection — the full frame with its bbox drawn
+over it, the cached crop, and class / sub-class dropdowns. Mobile layout is a
+vertical stack sized so the whole experience (image, dropdowns, primary
+actions) sits above the fold on a typical phone viewport; desktop is a
+two-column grid with image on the left and controls on the right.
+
+Data source: `GET /api/detections?include=auto&class_id=...` — a flat
+detection queue driven by `query_gallery_page` (same envelope as the
+class/sub-class galleries). The page holds a numeric cursor into the loaded
+rows and pre-fetches the next page within five items of the end.
+
+Interactions:
+- **Class dropdown** — PATCH `class_id` (and clears `subclass_id` in the
+  same hop, since sub-classes are class-scoped). Save is eager; the cursor
+  does not advance.
+- **Sub-class dropdown** — PATCH `subclass_id`. Disabled when no class is
+  set or the class has no active sub-classes.
+- **Confirm** (primary, full-height button) — PATCH `reviewed=true`. The
+  row is spliced out of every detection-gallery cache optimistically, which
+  naturally advances the cursor to the next item.
+- **Delete** — `DELETE /api/detections/{id}` (soft-delete, `user_delete`
+  audit). Same optimistic-splice advance.
+- **Skip** — bump the index only; no state change. Used when the user wants
+  to defer judgement on this detection.
+
+Filter: a single class-scoped dropdown in the page header. The cursor resets
+to 0 when the filter changes.
+
 ## Bulk labeling
 
 The per-frame queue handles "one decision at a time". Two additional sub-pages

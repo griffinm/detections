@@ -7,6 +7,7 @@ import { ClipsList } from "./routes/clips/index";
 import { ClipDetail } from "./routes/clips/detail";
 import { FrameDetailPage } from "./routes/clips/frame";
 import { LabelingQueue } from "./routes/labeling/index";
+import { LabelingQuick } from "./routes/labeling/quick";
 import { LabelingFrame } from "./routes/labeling/frame";
 import { LabelingGroups } from "./routes/labeling/groups";
 import { LabelingSimilarity } from "./routes/labeling/similarity";
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/clips/:id" element={<ClipDetail />} />
           <Route path="/clips/:id/frames/:frameId" element={<FrameDetailPage />} />
           <Route path="/labeling" element={<LabelingQueue />} />
+          <Route path="/labeling/quick" element={<LabelingQuick />} />
           <Route path="/labeling/groups" element={<LabelingGroups />} />
           <Route path="/labeling/similarity" element={<LabelingSimilarity />} />
           <Route path="/labeling/tracks" element={<LabelingTracks />} />

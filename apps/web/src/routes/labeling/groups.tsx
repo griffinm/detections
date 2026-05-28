@@ -11,7 +11,7 @@ import {
 } from "@/components/labeling/DetectionTileGrid";
 import { LabelingTabs } from "@/components/labeling/LabelingTabs";
 import { cn } from "@/lib/utils";
-import { useClasses } from "@/hooks/useClasses";
+import { useClasses, type VdClass } from "@/hooks/useClasses";
 import { useSubclasses } from "@/hooks/useSubclasses";
 import {
   useBulkApply,
@@ -85,16 +85,26 @@ function GroupCard({
 
 function GroupDetail({
   group,
+  classes,
   onBack,
 }: {
   group: PredictedGroup;
+  classes: VdClass[];
   onBack: () => void;
 }) {
   const { data: items = [], isPending } = usePredictedGroupDetections({
     predictedSubclassId: group.predicted_subclass_id,
     bucket: group.confidence_bucket,
   });
-  const { data: subclasses = [] } = useSubclasses(group.class_id ?? undefined);
+  const activeClasses = useMemo(
+    () => classes.filter((c) => c.is_active),
+    [classes],
+  );
+  // Target class for the bulk apply — defaults to the group's class but can
+  // diverge to reassign mis-classified detections (e.g. predicted-as-dog
+  // crops that are actually cats).
+  const [targetClass, setTargetClass] = useState<string>(group.class_id ?? "");
+  const { data: subclasses = [] } = useSubclasses(targetClass || undefined);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [targetSubclass, setTargetSubclass] = useState<string>(
@@ -112,9 +122,35 @@ function GroupDetail({
   }, [allIds]);
 
   const activeSubclasses = subclasses.filter((s) => s.is_active);
-  const targetName =
-    activeSubclasses.find((s) => s.id === targetSubclass)?.name ??
-    group.predicted_subclass_name;
+  // When the target class changes away from the group's class the predicted
+  // sub-class no longer belongs to it — drop to "(no sub-class)" and let the
+  // user pick from the new class. When they switch back, default to the
+  // group's prediction again.
+  useEffect(() => {
+    if (activeSubclasses.length === 0) {
+      setTargetSubclass("");
+      return;
+    }
+    if (!activeSubclasses.some((s) => s.id === targetSubclass)) {
+      setTargetSubclass(
+        targetClass === group.class_id ? group.predicted_subclass_id : "",
+      );
+    }
+  }, [
+    activeSubclasses,
+    targetSubclass,
+    targetClass,
+    group.class_id,
+    group.predicted_subclass_id,
+  ]);
+  const targetSubName =
+    activeSubclasses.find((s) => s.id === targetSubclass)?.name ?? "";
+  const targetClassName =
+    activeClasses.find((c) => c.id === targetClass)?.name ?? "";
+  const classReassign =
+    Boolean(targetClass) && targetClass !== group.class_id;
+  const canApply =
+    selected.size > 0 && (Boolean(targetSubclass) || classReassign);
   const colorBySub = useMemo(
     () => Object.fromEntries(activeSubclasses.map((s) => [s.id, s.color_hex])),
     [activeSubclasses],
@@ -126,24 +162,28 @@ function GroupDetail({
       toast.error("Select at least one detection");
       return;
     }
-    bulk.mutate(
-      {
-        detection_ids: [...selected],
-        subclass_id: targetSubclass,
-        reviewed: true,
+    if (!targetSubclass && !classReassign) {
+      toast.error("Pick a sub-class or a different target class to apply");
+      return;
+    }
+    const payload: Parameters<typeof bulk.mutate>[0] = {
+      detection_ids: [...selected],
+      reviewed: true,
+    };
+    const effectiveClass = targetClass || group.class_id;
+    if (effectiveClass) payload.class_id = effectiveClass;
+    if (targetSubclass) payload.subclass_id = targetSubclass;
+    bulk.mutate(payload, {
+      onSuccess: (result) => {
+        toast.success(
+          `Applied to ${result.updated} detection${
+            result.updated === 1 ? "" : "s"
+          }${result.skipped ? ` (${result.skipped} skipped)` : ""}`,
+        );
+        onBack();
       },
-      {
-        onSuccess: (result) => {
-          toast.success(
-            `Applied to ${result.updated} detection${
-              result.updated === 1 ? "" : "s"
-            }${result.skipped ? ` (${result.skipped} skipped)` : ""}`,
-          );
-          onBack();
-        },
-        onError: () => toast.error("Failed to apply"),
-      },
-    );
+      onError: () => toast.error("Failed to apply"),
+    });
   };
 
   return (
@@ -183,22 +223,43 @@ function GroupDetail({
             Clear
           </Button>
           <Select
-            value={targetSubclass}
-            onChange={(e) => setTargetSubclass(e.target.value)}
+            value={targetClass}
+            onChange={(e) => setTargetClass(e.target.value)}
             className="h-8 text-xs"
+            title="Target class to assign"
+            disabled={activeClasses.length === 0}
           >
-            {activeSubclasses.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
+            {activeClasses.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.id === group.class_id ? c.name : `→ ${c.name}`}
               </option>
             ))}
           </Select>
-          <Button
-            onClick={apply}
-            disabled={bulk.isPending || selected.size === 0}
-          >
+          {activeSubclasses.length > 0 ? (
+            <Select
+              value={targetSubclass}
+              onChange={(e) => setTargetSubclass(e.target.value)}
+              className="h-8 text-xs"
+            >
+              <option value="">(no sub-class)</option>
+              {activeSubclasses.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              No sub-classes for {targetClassName || "this class"}
+            </span>
+          )}
+          <Button onClick={apply} disabled={bulk.isPending || !canApply}>
             <CheckCircle2 className="h-4 w-4" />
-            Apply “{targetName}”
+            {targetSubName
+              ? `Apply “${targetSubName}”`
+              : classReassign
+                ? `Reassign to “${targetClassName}”`
+                : "Apply"}
           </Button>
         </div>
       </div>
@@ -278,6 +339,7 @@ export function LabelingGroups() {
       {selectedGroup ? (
         <GroupDetail
           group={selectedGroup}
+          classes={classes}
           onBack={() => setSelectedKey(null)}
         />
       ) : isPending ? (

@@ -87,8 +87,10 @@ async def test_class_detections_aggregates_across_subclasses(client, session):  
 
     resp = await client.get(f"/api/classes/{person}/detections")
     assert resp.status_code == 200
-    ids = {d["id"] for d in resp.json()}
+    body = resp.json()
+    ids = {d["id"] for d in body["items"]}
     assert ids == {str(det_a.id), str(det_b.id), str(det_unassigned.id)}
+    assert body["total"] == 3
 
 
 async def test_class_examples_aggregates_active_subclasses_only(client, session):  # type: ignore[no-untyped-def]
@@ -111,12 +113,14 @@ async def test_class_examples_aggregates_active_subclasses_only(client, session)
     resp = await client.get(f"/api/classes/{person}/examples")
     assert resp.status_code == 200
     body = resp.json()
-    assert {ex["subclass_id"] for ex in body} == {sub_a_id, sub_b_id}
+    assert {ex["subclass_id"] for ex in body["items"]} == {sub_a_id, sub_b_id}
+    assert body["total"] == 2
 
     # Deactivating a sub-class hides its examples from the class roll-up.
     await client.delete(f"/api/subclasses/{sub_b_id}")
     after = (await client.get(f"/api/classes/{person}/examples")).json()
-    assert {ex["subclass_id"] for ex in after} == {sub_a_id}
+    assert {ex["subclass_id"] for ex in after["items"]} == {sub_a_id}
+    assert after["total"] == 1
 
 
 async def test_class_detections_404(client):  # type: ignore[no-untyped-def]

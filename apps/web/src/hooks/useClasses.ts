@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCursorInfiniteQuery } from "./usePaginated";
 import type {
   DetectionGalleryItem,
   GalleryParams,
@@ -6,15 +7,7 @@ import type {
 } from "./useSubclasses";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
-
-function galleryQS(params: GalleryParams = {}): string {
-  const qs = new URLSearchParams();
-  if (params.include) qs.set("include", params.include);
-  if (params.sort) qs.set("sort", params.sort);
-  if (params.limit !== undefined) qs.set("limit", String(params.limit));
-  const s = qs.toString();
-  return s ? `?${s}` : "";
-}
+const GALLERY_PAGE_SIZE = 60;
 
 export interface VdClass {
   id: string;
@@ -115,27 +108,20 @@ export function useDeleteClass() {
 }
 
 export function useClassDetections(classId: string, params: GalleryParams = {}) {
-  return useQuery<DetectionGalleryItem[]>({
+  return useCursorInfiniteQuery<DetectionGalleryItem>({
     queryKey: ["class-detections", classId, params],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/classes/${classId}/detections${galleryQS(params)}`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch tagged detections");
-      return res.json() as Promise<DetectionGalleryItem[]>;
-    },
+    url: `/api/classes/${classId}/detections`,
+    params: { include: params.include, sort: params.sort },
+    limit: GALLERY_PAGE_SIZE,
     enabled: Boolean(classId),
   });
 }
 
 export function useClassExamples(classId: string) {
-  return useQuery<SubclassExample[]>({
+  return useCursorInfiniteQuery<SubclassExample>({
     queryKey: ["class-examples", classId],
-    queryFn: async () => {
-      const res = await fetch(`/api/classes/${classId}/examples`);
-      if (!res.ok) throw new Error("Failed to fetch examples");
-      return res.json() as Promise<SubclassExample[]>;
-    },
+    url: `/api/classes/${classId}/examples`,
+    limit: GALLERY_PAGE_SIZE,
     enabled: Boolean(classId),
   });
 }

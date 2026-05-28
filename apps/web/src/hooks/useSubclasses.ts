@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCursorInfiniteQuery } from "./usePaginated";
 import type { Bbox } from "./useFrame";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -45,17 +46,9 @@ export interface DetectionGalleryItem {
 export interface GalleryParams {
   include?: GalleryInclude;
   sort?: GallerySort;
-  limit?: number;
 }
 
-function galleryQS(params: GalleryParams = {}): string {
-  const qs = new URLSearchParams();
-  if (params.include) qs.set("include", params.include);
-  if (params.sort) qs.set("sort", params.sort);
-  if (params.limit !== undefined) qs.set("limit", String(params.limit));
-  const s = qs.toString();
-  return s ? `?${s}` : "";
-}
+const GALLERY_PAGE_SIZE = 60;
 
 export interface SubclassInput {
   name: string;
@@ -130,13 +123,10 @@ export function useDeleteSubclass() {
 }
 
 export function useSubclassExamples(subclassId: string) {
-  return useQuery<SubclassExample[]>({
+  return useCursorInfiniteQuery<SubclassExample>({
     queryKey: ["subclass-examples", subclassId],
-    queryFn: async () => {
-      const res = await fetch(`/api/subclasses/${subclassId}/examples`);
-      if (!res.ok) throw new Error("Failed to fetch examples");
-      return res.json() as Promise<SubclassExample[]>;
-    },
+    url: `/api/subclasses/${subclassId}/examples`,
+    limit: GALLERY_PAGE_SIZE,
     enabled: Boolean(subclassId),
   });
 }
@@ -145,15 +135,11 @@ export function useSubclassDetections(
   subclassId: string,
   params: GalleryParams = {},
 ) {
-  return useQuery<DetectionGalleryItem[]>({
+  return useCursorInfiniteQuery<DetectionGalleryItem>({
     queryKey: ["subclass-detections", subclassId, params],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/subclasses/${subclassId}/detections${galleryQS(params)}`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch tagged detections");
-      return res.json() as Promise<DetectionGalleryItem[]>;
-    },
+    url: `/api/subclasses/${subclassId}/detections`,
+    params: { include: params.include, sort: params.sort },
+    limit: GALLERY_PAGE_SIZE,
     enabled: Boolean(subclassId),
   });
 }

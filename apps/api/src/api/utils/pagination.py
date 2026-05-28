@@ -151,3 +151,40 @@ def build_page(
         [item_cls.model_validate(r) for r in visible] if item_cls is not None else visible
     )
     return Paginated(items=items, total=total, next_cursor=next_cursor)
+
+
+def offset_from_cursor(cursor: str | None) -> int:
+    """Decode an opaque offset cursor → int. 400 if malformed.
+
+    Used by endpoints where keyset pagination is awkward — e.g. the detection
+    gallery sorts by `(reviewed_at NULLS LAST, created_at)`, which a single
+    `(sort_col, id)` keyset can't express without losing NULL semantics. The
+    trade-off is that offset pagination can show duplicates if rows are
+    inserted between page fetches; acceptable for admin galleries.
+    """
+    if cursor is None:
+        return 0
+    try:
+        offset = int(cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Malformed cursor") from exc
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="Malformed cursor")
+    return offset
+
+
+def offset_page(
+    items: list[Any],
+    *,
+    offset: int,
+    limit: int,
+    total: int,
+) -> Paginated:
+    """Build a `Paginated` envelope from a pre-sliced `items` list + total.
+
+    Mirror of `build_page` for offset-based pagination. Caller has already
+    applied `.offset(offset).limit(limit)` to its query.
+    """
+    has_more = offset + len(items) < total
+    next_cursor = str(offset + limit) if has_more else None
+    return Paginated(items=items, total=total, next_cursor=next_cursor)

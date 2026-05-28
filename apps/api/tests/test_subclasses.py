@@ -129,13 +129,16 @@ async def test_example_add_list_delete(client, session):  # type: ignore[no-unty
     assert dup.status_code == 409
 
     listing = await client.get(f"/api/subclasses/{sub_id}/examples")
-    assert len(listing.json()) == 1
+    assert listing.json()["total"] == 1
+    assert len(listing.json()["items"]) == 1
 
     deleted = await client.delete(
         f"/api/subclasses/{sub_id}/examples/{example['id']}"
     )
     assert deleted.status_code == 204
-    assert (await client.get(f"/api/subclasses/{sub_id}/examples")).json() == []
+    after = (await client.get(f"/api/subclasses/{sub_id}/examples")).json()
+    assert after["items"] == []
+    assert after["total"] == 0
 
 
 async def test_promote_example_assigns_subclass_and_audits(client, session):  # type: ignore[no-untyped-def]
@@ -217,26 +220,27 @@ async def test_subclass_detections_lists_filters_and_sorts(client, session):  # 
     )
 
     all_ids = [
-        d["id"] for d in (await client.get(f"/api/subclasses/{sub_id}/detections")).json()
+        d["id"]
+        for d in (await client.get(f"/api/subclasses/{sub_id}/detections")).json()["items"]
     ]
     assert set(all_ids) == {str(auto_old.id), str(reviewed_new.id)}
     assert str(soft_deleted.id) not in all_ids  # soft-deleted excluded
 
     auto_only = (
         await client.get(f"/api/subclasses/{sub_id}/detections?include=auto")
-    ).json()
+    ).json()["items"]
     assert [d["id"] for d in auto_only] == [str(auto_old.id)]
 
     reviewed_only = (
         await client.get(f"/api/subclasses/{sub_id}/detections?include=reviewed")
-    ).json()
+    ).json()["items"]
     assert [d["id"] for d in reviewed_only] == [str(reviewed_new.id)]
 
     by_reviewed = (
         await client.get(
             f"/api/subclasses/{sub_id}/detections?sort=reviewed_desc"
         )
-    ).json()
+    ).json()["items"]
     # reviewed_at DESC NULLS LAST puts the reviewed one first.
     assert [d["id"] for d in by_reviewed] == [str(reviewed_new.id), str(auto_old.id)]
 

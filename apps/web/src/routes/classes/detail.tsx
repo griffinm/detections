@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   GraduationCap,
   Image as ImageIcon,
   ListChecks,
+  Loader2,
   Pencil,
   Plus,
   RefreshCw,
@@ -12,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
+import { InfiniteScrollSentinel } from "@/components/ui/InfiniteScrollSentinel";
 import { Select } from "@/components/ui/select";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { SubclassFormDialog } from "@/components/SubclassFormDialog";
@@ -117,9 +119,52 @@ function TaggedThumb({
   );
 }
 
+function GalleryFooter({
+  hasNextPage,
+  isFetchingNextPage,
+  fetchNextPage,
+  total,
+  unit,
+}: {
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  fetchNextPage: () => void;
+  total: number;
+  unit: string;
+}) {
+  return (
+    <div className="mt-3">
+      <InfiniteScrollSentinel
+        hasMore={hasNextPage}
+        isFetching={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
+      />
+      {isFetchingNextPage ? (
+        <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading more…
+        </div>
+      ) : !hasNextPage && total > 0 ? (
+        <div className="py-1 text-center text-[11px] text-muted-foreground">
+          End of results — {total.toLocaleString()} {unit}
+          {total === 1 ? "" : "s"} total
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SubclassExamplesGallery({ subclass }: { subclass: VdSubclass }) {
-  const { data: examples = [], isPending } = useSubclassExamples(subclass.id);
+  const {
+    rows: examples,
+    total,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    isPending,
+  } = useSubclassExamples(subclass.id);
   const removeExample = useDeleteExample(subclass.id);
+  const loadMore = useCallback(() => void fetchNextPage(), [fetchNextPage]);
 
   const remove = async (id: string): Promise<void> => {
     try {
@@ -142,16 +187,25 @@ function SubclassExamplesGallery({ subclass }: { subclass: VdSubclass }) {
     );
   }
   return (
-    <div className="flex flex-wrap gap-2">
-      {examples.map((ex) => (
-        <ExampleThumb
-          key={ex.id}
-          example={ex}
-          borderColor={subclass.color_hex}
-          onRemove={() => void remove(ex.id)}
-        />
-      ))}
-    </div>
+    <>
+      <div className="flex flex-wrap gap-2">
+        {examples.map((ex) => (
+          <ExampleThumb
+            key={ex.id}
+            example={ex}
+            borderColor={subclass.color_hex}
+            onRemove={() => void remove(ex.id)}
+          />
+        ))}
+      </div>
+      <GalleryFooter
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        fetchNextPage={loadMore}
+        total={total}
+        unit="example"
+      />
+    </>
   );
 }
 
@@ -162,7 +216,15 @@ function ClassExamplesGallery({
   classId: string;
   subclasses: VdSubclass[];
 }) {
-  const { data: examples = [], isPending } = useClassExamples(classId);
+  const {
+    rows: examples,
+    total,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    isPending,
+  } = useClassExamples(classId);
+  const loadMore = useCallback(() => void fetchNextPage(), [fetchNextPage]);
   const colorBySubclass = useMemo(
     () => Object.fromEntries(subclasses.map((s) => [s.id, s.color_hex])),
     [subclasses],
@@ -181,15 +243,24 @@ function ClassExamplesGallery({
     );
   }
   return (
-    <div className="flex flex-wrap gap-2">
-      {examples.map((ex) => (
-        <ExampleThumb
-          key={ex.id}
-          example={ex}
-          borderColor={colorBySubclass[ex.subclass_id]}
-        />
-      ))}
-    </div>
+    <>
+      <div className="flex flex-wrap gap-2">
+        {examples.map((ex) => (
+          <ExampleThumb
+            key={ex.id}
+            example={ex}
+            borderColor={colorBySubclass[ex.subclass_id]}
+          />
+        ))}
+      </div>
+      <GalleryFooter
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        fetchNextPage={loadMore}
+        total={total}
+        unit="example"
+      />
+    </>
   );
 }
 
@@ -247,10 +318,15 @@ function GalleryToolbar({
 function SubclassTaggedGallery({ subclass }: { subclass: VdSubclass }) {
   const [include, setInclude] = useState<GalleryInclude>("all");
   const [sort, setSort] = useState<GallerySort>("created_desc");
-  const { data: items = [], isPending } = useSubclassDetections(subclass.id, {
-    include,
-    sort,
-  });
+  const {
+    rows: items,
+    total,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    isPending,
+  } = useSubclassDetections(subclass.id, { include, sort });
+  const loadMore = useCallback(() => void fetchNextPage(), [fetchNextPage]);
 
   return (
     <div>
@@ -259,7 +335,7 @@ function SubclassTaggedGallery({ subclass }: { subclass: VdSubclass }) {
         sort={sort}
         onInclude={setInclude}
         onSort={setSort}
-        count={items.length}
+        count={total}
       />
       {isPending ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -268,11 +344,20 @@ function SubclassTaggedGallery({ subclass }: { subclass: VdSubclass }) {
           No detections match this filter yet.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          {items.map((it) => (
-            <TaggedThumb key={it.id} item={it} borderColor={subclass.color_hex} />
-          ))}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-2">
+            {items.map((it) => (
+              <TaggedThumb key={it.id} item={it} borderColor={subclass.color_hex} />
+            ))}
+          </div>
+          <GalleryFooter
+            hasNextPage={hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            fetchNextPage={loadMore}
+            total={total}
+            unit="detection"
+          />
+        </>
       )}
     </div>
   );
@@ -287,10 +372,15 @@ function ClassTaggedGallery({
 }) {
   const [include, setInclude] = useState<GalleryInclude>("all");
   const [sort, setSort] = useState<GallerySort>("created_desc");
-  const { data: items = [], isPending } = useClassDetections(classId, {
-    include,
-    sort,
-  });
+  const {
+    rows: items,
+    total,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    isPending,
+  } = useClassDetections(classId, { include, sort });
+  const loadMore = useCallback(() => void fetchNextPage(), [fetchNextPage]);
   const colorBySubclass = useMemo(
     () => Object.fromEntries(subclasses.map((s) => [s.id, s.color_hex])),
     [subclasses],
@@ -303,7 +393,7 @@ function ClassTaggedGallery({
         sort={sort}
         onInclude={setInclude}
         onSort={setSort}
-        count={items.length}
+        count={total}
       />
       {isPending ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -312,17 +402,26 @@ function ClassTaggedGallery({
           No detections match this filter yet.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          {items.map((it) => (
-            <TaggedThumb
-              key={it.id}
-              item={it}
-              borderColor={
-                it.subclass_id ? colorBySubclass[it.subclass_id] : undefined
-              }
-            />
-          ))}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-2">
+            {items.map((it) => (
+              <TaggedThumb
+                key={it.id}
+                item={it}
+                borderColor={
+                  it.subclass_id ? colorBySubclass[it.subclass_id] : undefined
+                }
+              />
+            ))}
+          </div>
+          <GalleryFooter
+            hasNextPage={hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            fetchNextPage={loadMore}
+            total={total}
+            unit="detection"
+          />
+        </>
       )}
     </div>
   );

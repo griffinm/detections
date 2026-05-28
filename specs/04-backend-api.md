@@ -284,24 +284,30 @@ same-host LAN.
   `vd.backfill_embeddings` for the class (powers the UI re-scan button).
 - `GET /subclasses?class_id=`, `GET /subclasses/{id}`, `PATCH /subclasses/{id}`,
   `DELETE /subclasses/{id}` (soft delete via `is_active`).
-- `GET /subclasses/{id}/examples` — example gallery (limit-capped list; each
-  item carries the detection bbox, the frame image URL, and a `crop_url`
-  pointing at the server-cropped thumbnail endpoint).
+- `GET /subclasses/{id}/examples?cursor=&limit=` — `Paginated[SubclassExampleRead]`
+  (see "Pagination"). Each item carries the detection bbox, the frame image
+  URL, and a `crop_url` pointing at the server-cropped thumbnail endpoint.
 - `POST /subclasses/{id}/examples` — add an example; `DELETE …/examples/{id}`.
-- `GET /subclasses/{id}/detections?include=&sort=&limit=` — every non-deleted
-  detection tagged with this sub-class. `include` ∈ `all` (default) | `auto`
-  (`reviewed=false`) | `reviewed` (`reviewed=true`). `sort` ∈ `created_desc`
-  (default) | `reviewed_desc` (`reviewed_at DESC NULLS LAST, created_at DESC`).
-  Returns `DetectionGalleryItem[]` — a lean shape (id, frame_id, clip_id,
-  class_id, subclass_id, bbox, image_url, crop_url, source, reviewed,
-  reviewed_at, created_at) tuned for the class-detail page gallery. The UI
-  renders the `crop_url` thumbnail; `image_url`/`bbox` stay on the row for
-  callers that need the full frame.
-- `GET /classes/{id}/detections?include=&sort=&limit=` — same shape and
-  params, aggregates across every sub-class (or none) of this class.
-- `GET /classes/{id}/examples?limit=` — `SubclassExample[]` rolled up across
-  the class's active sub-classes (newest first). Powers the class-level
-  "Examples" tab; sub-class `color_hex` keys the per-tile border in the UI.
+- `GET /subclasses/{id}/detections?include=&sort=&cursor=&limit=` — every
+  non-deleted detection tagged with this sub-class. `include` ∈ `all` (default)
+  | `auto` (`reviewed=false`) | `reviewed` (`reviewed=true`). `sort` ∈
+  `created_desc` (default) | `reviewed_desc` (`reviewed_at DESC NULLS LAST,
+  created_at DESC`). Returns `Paginated[DetectionGalleryItem]` — a lean shape
+  (id, frame_id, clip_id, class_id, subclass_id, bbox, image_url, crop_url,
+  source, reviewed, reviewed_at, created_at) tuned for the class-detail page
+  gallery. The UI renders the `crop_url` thumbnail; `image_url`/`bbox` stay on
+  the row for callers that need the full frame. Note: these gallery endpoints
+  use offset-based cursors (the cursor is the next offset) rather than the
+  keyset cursors documented in "Pagination" — `reviewed_desc`'s NULLS LAST
+  ordering doesn't map cleanly to a single `(sort_col, id)` keyset. The
+  response envelope is identical so the frontend's `useCursorInfiniteQuery`
+  works either way.
+- `GET /classes/{id}/detections?include=&sort=&cursor=&limit=` — same shape
+  and params, aggregates across every sub-class (or none) of this class.
+- `GET /classes/{id}/examples?cursor=&limit=` — `Paginated[SubclassExampleRead]`
+  rolled up across the class's active sub-classes (newest first). Powers the
+  class-level "Examples" tab; sub-class `color_hex` keys the per-tile border
+  in the UI.
 
 ### Labeling queue + bulk shortcuts
 - `GET /labeling/queue?strategy=&class_id=&limit=` — ordered list of frames

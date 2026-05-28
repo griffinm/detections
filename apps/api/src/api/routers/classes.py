@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.coco import COCO_80_NAMES
@@ -15,12 +15,19 @@ from api.schemas.class_ import (
     SubclassExampleRead,
     SubclassRead,
 )
+from api.schemas.common import Paginated
 from api.schemas.detection import Bbox, DetectionGalleryItem
 from api.services.crops import crop_url
 from api.services.gallery import (
     GalleryInclude,
     GallerySort,
-    query_gallery_items,
+    query_gallery_page,
+)
+from api.utils.pagination import (
+    CursorPage,
+    cursor_params,
+    offset_from_cursor,
+    offset_page,
 )
 from vd_db.models import (
     Class,
@@ -207,37 +214,45 @@ async def create_subclass(
     return subclass
 
 
-@router.get("/{class_id}/detections", response_model=list[DetectionGalleryItem])
+@router.get("/{class_id}/detections", response_model=Paginated[DetectionGalleryItem])
 async def list_class_detections(
     class_id: uuid.UUID,
     include: GalleryInclude = Query(default="all"),
     sort: GallerySort = Query(default="created_desc"),
-    limit: int = Query(default=200, ge=1, le=1000),
+    page: CursorPage = Depends(cursor_params),
     db: AsyncSession = Depends(get_db),
-) -> list[DetectionGalleryItem]:
+) -> Paginated[DetectionGalleryItem]:
     """Every non-deleted detection tagged with this class (any sub-class or none)."""
     cls = await db.get(Class, class_id)
     if cls is None:
         raise HTTPException(status_code=404, detail="Class not found")
-    return await query_gallery_items(
+    return await query_gallery_page(
         db,
         where=DetectionModel.class_id == class_id,
         include=include,
         sort=sort,
-        limit=limit,
+        offset=offset_from_cursor(page.cursor),
+        limit=page.limit,
     )
 
 
-@router.get("/{class_id}/examples", response_model=list[SubclassExampleRead])
+@router.get("/{class_id}/examples", response_model=Paginated[SubclassExampleRead])
 async def list_class_examples(
     class_id: uuid.UUID,
-    limit: int = Query(default=400, ge=1, le=2000),
+    page: CursorPage = Depends(cursor_params),
     db: AsyncSession = Depends(get_db),
-) -> list[SubclassExampleRead]:
+) -> Paginated[SubclassExampleRead]:
     """Curated examples across every active sub-class of this class."""
     cls = await db.get(Class, class_id)
     if cls is None:
         raise HTTPException(status_code=404, detail="Class not found")
+    base = (
+        select(SubclassExample.id)
+        .join(Subclass, Subclass.id == SubclassExample.subclass_id)
+        .where(Subclass.class_id == class_id, Subclass.is_active.is_(True))
+    )
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    offset = offset_from_cursor(page.cursor)
     rows = (
         await db.execute(
             select(SubclassExample, DetectionModel.bbox, Frame)
@@ -245,11 +260,12 @@ async def list_class_examples(
             .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
             .join(Frame, Frame.id == DetectionModel.frame_id)
             .where(Subclass.class_id == class_id, Subclass.is_active.is_(True))
-            .order_by(SubclassExample.created_at.desc())
-            .limit(limit)
+            .order_by(SubclassExample.created_at.desc(), SubclassExample.id.desc())
+            .offset(offset)
+            .limit(page.limit)
         )
     ).all()
-    return [
+    items = [
         SubclassExampleRead(
             id=example.id,
             subclass_id=example.subclass_id,
@@ -263,6 +279,7 @@ async def list_class_examples(
         )
         for example, bbox, frame in rows
     ]
+    return offset_page(items, offset=offset, limit=page.limit, total=total)
 
 
 @router.post("/{class_id}/rescan-subclasses", status_code=202)

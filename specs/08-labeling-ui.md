@@ -355,12 +355,25 @@ The right panel is a two-tab surface (`components/ui/tabs.tsx`):
     (`reviewed=true`) — distinguishes kNN auto-assignment from human review.
   - **Sort:** `Newest first` (`created_desc`) or `Recently reviewed`
     (`reviewed_desc`). State resets when switching the left-rail selection.
-  - **Tile badge:** green dot = reviewed, amber dot = auto-assigned.
+  - **Tile badge:** green dot = reviewed, amber dot = auto-assigned
+    (top-left of the tile, so the top-right is free for action buttons).
   - **Click** → deep-links to `/labeling/:frame_id` so a bad auto-assignment
     can be corrected in one hop.
+  - **Hover actions:**
+    - **Untag** (`Eraser`) — clears `subclass_id` and sets `reviewed=true` via
+      `PATCH /api/detections/{id}`, so the next kNN sweep can't re-tag it.
+      Hidden on class-scope tiles whose `subclass_id` is already `null`.
+    - **Delete** (`Trash2`) — soft-deletes via `DELETE /api/detections/{id}`
+      (sets `deleted_at`).
+    - Both actions splice the tile out of every loaded gallery cache
+      optimistically and show a 5-second sonner toast with an **Undo**
+      action — undo calls the inverse mutation (re-PATCH with the previous
+      `(subclass_id, reviewed)` for untag, `POST /restore` for delete).
+    - The Examples gallery queries on `/api/{subclasses|classes}/{id}/examples`
+      filter on `detections.deleted_at IS NULL`, so a soft-deleted detection
+      that was also a promoted example disappears from the Examples tab too.
 
-Promoting still uses `S` in the labeling UI; the panel itself is read-only
-beyond `Remove example` on the Examples tab.
+Promoting still uses `S` in the labeling UI.
 
 When a user promotes a detection to an example, we:
 1. Insert `subclass_examples` row.

@@ -249,7 +249,12 @@ async def list_class_examples(
     base = (
         select(SubclassExample.id)
         .join(Subclass, Subclass.id == SubclassExample.subclass_id)
-        .where(Subclass.class_id == class_id, Subclass.is_active.is_(True))
+        .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
+        .where(
+            Subclass.class_id == class_id,
+            Subclass.is_active.is_(True),
+            DetectionModel.deleted_at.is_(None),
+        )
     )
     total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
     offset = offset_from_cursor(page.cursor)
@@ -259,7 +264,11 @@ async def list_class_examples(
             .join(Subclass, Subclass.id == SubclassExample.subclass_id)
             .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
             .join(Frame, Frame.id == DetectionModel.frame_id)
-            .where(Subclass.class_id == class_id, Subclass.is_active.is_(True))
+            .where(
+                Subclass.class_id == class_id,
+                Subclass.is_active.is_(True),
+                DetectionModel.deleted_at.is_(None),
+            )
             .order_by(SubclassExample.created_at.desc(), SubclassExample.id.desc())
             .offset(offset)
             .limit(page.limit)

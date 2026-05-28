@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type MouseEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   GraduationCap,
@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Eraser,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -20,6 +21,12 @@ import { SubclassFormDialog } from "@/components/SubclassFormDialog";
 import { cn } from "@/lib/utils";
 import { useClasses, useClassDetections, useClassExamples } from "@/hooks/useClasses";
 import { useStartTraining } from "@/hooks/useTraining";
+import {
+  useDeleteDetectionGallery,
+  useRestoreDetectionGallery,
+  useRetagDetectionGallery,
+  useUntagDetection,
+} from "@/hooks/useDetections";
 import {
   useDeleteExample,
   useDeleteSubclass,
@@ -75,15 +82,26 @@ function ExampleThumb({
   );
 }
 
-/** A tagged-detection tile: click to jump into the labeling UI. */
+/** A tagged-detection tile: click to jump into the labeling UI.
+ *  Hover surfaces Untag / Delete buttons; either action stops the click from
+ *  bubbling to the wrapping Link. */
 function TaggedThumb({
   item,
   borderColor,
+  onUntag,
+  onDelete,
 }: {
   item: DetectionGalleryItem;
   borderColor?: string;
+  onUntag?: () => void;
+  onDelete?: () => void;
 }) {
   const reviewed = item.reviewed;
+  const stop = (handler: () => void) => (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handler();
+  };
   return (
     <Link
       to={`/labeling/${item.frame_id}`}
@@ -110,13 +128,95 @@ function TaggedThumb({
       </div>
       <span
         className={cn(
-          "absolute right-1 top-1 h-2.5 w-2.5 rounded-full border border-background",
+          "absolute left-1 top-1 h-2.5 w-2.5 rounded-full border border-background",
           reviewed ? "bg-emerald-500" : "bg-amber-500",
         )}
         aria-label={reviewed ? "Reviewed" : "Auto-assigned"}
       />
+      {onUntag || onDelete ? (
+        <div className="absolute right-1 top-1 hidden gap-1 group-hover:flex">
+          {onUntag ? (
+            <button
+              onClick={stop(onUntag)}
+              title="Untag (clear sub-class)"
+              className="rounded bg-background/90 p-1 text-muted-foreground hover:text-foreground"
+            >
+              <Eraser className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button
+              onClick={stop(onDelete)}
+              title="Delete detection"
+              className="rounded bg-background/90 p-1 text-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </Link>
   );
+}
+
+/** Untag + Delete handlers shared by both tagged galleries. Each fires the
+ *  optimistic mutation and shows a 5s sonner toast with an Undo action. */
+function useTileActions() {
+  const untagMut = useUntagDetection();
+  const retagMut = useRetagDetectionGallery();
+  const deleteMut = useDeleteDetectionGallery();
+  const restoreMut = useRestoreDetectionGallery();
+
+  const untag = useCallback(
+    (item: DetectionGalleryItem) => {
+      // Button is hidden when there's no sub-class — guard anyway.
+      const prevSubclass = item.subclass_id;
+      const prevReviewed = item.reviewed;
+      if (!prevSubclass) return;
+      untagMut.mutate(
+        { id: item.id },
+        {
+          onSuccess: () =>
+            toast("Detection untagged", {
+              duration: 5000,
+              action: {
+                label: "Undo",
+                onClick: () =>
+                  retagMut.mutate({
+                    id: item.id,
+                    subclass_id: prevSubclass,
+                    reviewed: prevReviewed,
+                  }),
+              },
+            }),
+          onError: () => toast.error("Could not untag detection"),
+        },
+      );
+    },
+    [untagMut, retagMut],
+  );
+
+  const remove = useCallback(
+    (item: DetectionGalleryItem) => {
+      deleteMut.mutate(
+        { id: item.id },
+        {
+          onSuccess: () =>
+            toast("Detection deleted", {
+              duration: 5000,
+              action: {
+                label: "Undo",
+                onClick: () => restoreMut.mutate({ id: item.id }),
+              },
+            }),
+          onError: () => toast.error("Could not delete detection"),
+        },
+      );
+    },
+    [deleteMut, restoreMut],
+  );
+
+  return { untag, remove };
 }
 
 function GalleryFooter({
@@ -327,6 +427,7 @@ function SubclassTaggedGallery({ subclass }: { subclass: VdSubclass }) {
     isPending,
   } = useSubclassDetections(subclass.id, { include, sort });
   const loadMore = useCallback(() => void fetchNextPage(), [fetchNextPage]);
+  const actions = useTileActions();
 
   return (
     <div>
@@ -347,7 +448,13 @@ function SubclassTaggedGallery({ subclass }: { subclass: VdSubclass }) {
         <>
           <div className="flex flex-wrap gap-2">
             {items.map((it) => (
-              <TaggedThumb key={it.id} item={it} borderColor={subclass.color_hex} />
+              <TaggedThumb
+                key={it.id}
+                item={it}
+                borderColor={subclass.color_hex}
+                onUntag={() => actions.untag(it)}
+                onDelete={() => actions.remove(it)}
+              />
             ))}
           </div>
           <GalleryFooter
@@ -385,6 +492,7 @@ function ClassTaggedGallery({
     () => Object.fromEntries(subclasses.map((s) => [s.id, s.color_hex])),
     [subclasses],
   );
+  const actions = useTileActions();
 
   return (
     <div>
@@ -411,6 +519,8 @@ function ClassTaggedGallery({
                 borderColor={
                   it.subclass_id ? colorBySubclass[it.subclass_id] : undefined
                 }
+                onUntag={it.subclass_id ? () => actions.untag(it) : undefined}
+                onDelete={() => actions.remove(it)}
               />
             ))}
           </div>

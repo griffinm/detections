@@ -1,5 +1,11 @@
 import { useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   createDetection,
@@ -12,6 +18,8 @@ import {
 } from "@/lib/apiDetections";
 import { useLabelingStore, type DetectionPatch } from "@/stores/labeling";
 import type { Bbox, Detection, FrameDetail } from "@/hooks/useFrame";
+import type { Paginated } from "./usePaginated";
+import type { DetectionGalleryItem } from "./useSubclasses";
 
 /**
  * Eager-save detection editing for one frame. Every edit hits the API
@@ -183,4 +191,125 @@ export function useDetectionActions(frameId: string) {
       },
     };
   }, [frameId, qc]);
+}
+
+// ---------------------------------------------------------------------------
+// Gallery-level detection mutations
+//
+// Used by the per-tile actions on `/classes/:id` (Untag / Delete + undo).
+// These work against the infinite-paged caches keyed by
+// ["subclass-detections", …] and ["class-detections", …]. The labeling-UI
+// hooks above operate on a single frame cache and aren't relevant here.
+// ---------------------------------------------------------------------------
+
+type GalleryCache = InfiniteData<Paginated<DetectionGalleryItem>, string | null>;
+type GallerySnapshot = Array<[QueryKey, GalleryCache | undefined]>;
+
+const GALLERY_FAMILIES: ReadonlyArray<QueryKey> = [
+  ["subclass-detections"],
+  ["class-detections"],
+];
+
+function spliceDetectionFromGalleries(
+  qc: QueryClient,
+  detectionId: string,
+): GallerySnapshot {
+  const snapshots: GallerySnapshot = [];
+  for (const family of GALLERY_FAMILIES) {
+    for (const [key, data] of qc.getQueriesData<GalleryCache>({
+      queryKey: family,
+    })) {
+      snapshots.push([key, data]);
+      if (!data) continue;
+      let removed = 0;
+      const pages = data.pages.map((p) => {
+        const items = p.items.filter((it) => it.id !== detectionId);
+        const drop = p.items.length - items.length;
+        if (!drop) return p;
+        removed += drop;
+        return { ...p, items, total: Math.max(0, p.total - drop) };
+      });
+      if (removed > 0) qc.setQueryData<GalleryCache>(key, { ...data, pages });
+    }
+  }
+  return snapshots;
+}
+
+function restoreGalleries(qc: QueryClient, snapshot: GallerySnapshot): void {
+  for (const [key, data] of snapshot) qc.setQueryData(key, data);
+}
+
+async function invalidateDetectionGalleries(qc: QueryClient): Promise<void> {
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: ["subclass-detections"] }),
+    qc.invalidateQueries({ queryKey: ["class-detections"] }),
+    // Soft-delete + untag both change what shows on the Examples tab too
+    // (deleted_at filter + sub-class membership), so refresh those caches.
+    qc.invalidateQueries({ queryKey: ["subclass-examples"] }),
+    qc.invalidateQueries({ queryKey: ["class-examples"] }),
+  ]);
+}
+
+/** Clear `subclass_id` and mark `reviewed=true` so the next kNN sweep can't
+ *  re-tag the detection. Optimistically removes the tile from every loaded
+ *  gallery and rolls back on error. */
+export function useUntagDetection() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { id: string }, { snapshot: GallerySnapshot }>(
+    {
+      mutationFn: async ({ id }) => {
+        await updateDetection(id, { subclass_id: null, reviewed: true });
+      },
+      onMutate: ({ id }) => ({ snapshot: spliceDetectionFromGalleries(qc, id) }),
+      onError: (_err, _vars, ctx) => {
+        if (ctx) restoreGalleries(qc, ctx.snapshot);
+      },
+      onSettled: () => invalidateDetectionGalleries(qc),
+    },
+  );
+}
+
+/** Soft-delete the detection (sets `deleted_at`). Optimistic gallery splice. */
+export function useDeleteDetectionGallery() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { id: string }, { snapshot: GallerySnapshot }>(
+    {
+      mutationFn: async ({ id }) => deleteDetection(id),
+      onMutate: ({ id }) => ({ snapshot: spliceDetectionFromGalleries(qc, id) }),
+      onError: (_err, _vars, ctx) => {
+        if (ctx) restoreGalleries(qc, ctx.snapshot);
+      },
+      onSettled: () => invalidateDetectionGalleries(qc),
+    },
+  );
+}
+
+/** Undo a gallery delete. Caches are refetched rather than surgically
+ *  reinserted — the row's sort position depends on `created_at` /
+ *  `reviewed_at` and is cheaper to re-query than to recompute client-side. */
+export function useRestoreDetectionGallery() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      await restoreDetection(id);
+    },
+    onSettled: () => invalidateDetectionGalleries(qc),
+  });
+}
+
+/** Undo an untag: re-assigns the prior sub-class and prior `reviewed` flag.
+ *  Same refetch-rather-than-reinsert rationale as
+ *  {@link useRestoreDetectionGallery}. */
+export function useRetagDetectionGallery() {
+  const qc = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { id: string; subclass_id: string; reviewed: boolean }
+  >({
+    mutationFn: async ({ id, subclass_id, reviewed }) => {
+      await updateDetection(id, { subclass_id, reviewed });
+    },
+    onSettled: () => invalidateDetectionGalleries(qc),
+  });
 }

@@ -132,8 +132,11 @@ async def list_examples(
 
     total = (
         await db.scalar(
-            select(func.count(SubclassExample.id)).where(
-                SubclassExample.subclass_id == subclass_id
+            select(func.count(SubclassExample.id))
+            .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
+            .where(
+                SubclassExample.subclass_id == subclass_id,
+                DetectionModel.deleted_at.is_(None),
             )
         )
     ) or 0
@@ -143,7 +146,10 @@ async def list_examples(
             select(SubclassExample, DetectionModel.bbox, Frame)
             .join(DetectionModel, DetectionModel.id == SubclassExample.detection_id)
             .join(Frame, Frame.id == DetectionModel.frame_id)
-            .where(SubclassExample.subclass_id == subclass_id)
+            .where(
+                SubclassExample.subclass_id == subclass_id,
+                DetectionModel.deleted_at.is_(None),
+            )
             .order_by(SubclassExample.created_at.desc(), SubclassExample.id.desc())
             .offset(offset)
             .limit(page.limit)

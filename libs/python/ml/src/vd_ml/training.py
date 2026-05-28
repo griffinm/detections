@@ -72,6 +72,10 @@ def train_yolo(
         # and so cannot spawn children. workers>0 would have the DataLoader
         # fork worker processes and crash; load in-process instead.
         workers=0,
+        # Frames live on a NAS bind mount; with workers=0 the serial loader
+        # can't overlap NFS reads with GPU compute. Preload the dataset into
+        # RAM once at startup so epochs 2..N don't refetch over the wire.
+        cache=True,
     )
     summary: dict[str, float] = dict(getattr(results, "results_dict", {}) or {})
     best = Path(results.save_dir) / "weights" / "best.pt"

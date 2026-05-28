@@ -148,9 +148,10 @@ stack's shared services rather than duplicating them.
   hostname in `proxy_pass` is resolved once at startup and cached, so a
   recreated `vd-api` (new IP) would 502 until nginx reloaded.
 - **Host ports** (LAN only): web `10800`, api `10801`, flower `10802`.
-- **Data** is bind-mounted under `/home/griffin/video-detections/data` on the
-  server (same layout as below). The watched inbox is
-  `/home/griffin/video-detections/data/videos/inbox`.
+- **Data** is bind-mounted from the NAS under
+  `/mnt/nas/app-data/video-detections/data` on the server (same layout as
+  below). The watched inbox is
+  `/mnt/nas/app-data/video-detections/data/videos/inbox`.
 - **Images are built locally and pushed to a private registry** at
   `nas.malfin.com:10100`, matching the sibling apps in this stack (see
   `../unifi-protect/push-to-docker.sh`). `tools/scripts/deploy.sh` builds

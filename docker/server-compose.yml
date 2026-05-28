@@ -37,10 +37,10 @@ services:
     restart: unless-stopped
     environment: *vd-env
     volumes:
-      - /home/griffin/video-detections/data/frames:/data/frames
+      - /mnt/nas/app-data/video-detections/data/frames:/data/frames
       # The API writes browser uploads (POST /api/clips/upload) into inbox/;
       # the ingest-watcher shares this mount and picks them up on close/move.
-      - /home/griffin/video-detections/data/videos:/data/videos
+      - /mnt/nas/app-data/video-detections/data/videos:/data/videos
     ports:
       - "10801:8000"
     networks:
@@ -71,9 +71,9 @@ services:
     restart: unless-stopped
     environment: *vd-env
     volumes:
-      - /home/griffin/video-detections/data/videos:/data/videos
-      - /home/griffin/video-detections/data/frames:/data/frames
-      - /home/griffin/video-detections/data/models:/data/models
+      - /mnt/nas/app-data/video-detections/data/videos:/data/videos
+      - /mnt/nas/app-data/video-detections/data/frames:/data/frames
+      - /mnt/nas/app-data/video-detections/data/models:/data/models
     command: celery -A worker.app worker -Q cpu -c 2 --loglevel=INFO
     networks:
       - prod
@@ -92,9 +92,9 @@ services:
               count: 1
               capabilities: [gpu]
     volumes:
-      - /home/griffin/video-detections/data/videos:/data/videos
-      - /home/griffin/video-detections/data/frames:/data/frames
-      - /home/griffin/video-detections/data/models:/data/models
+      - /mnt/nas/app-data/video-detections/data/videos:/data/videos
+      - /mnt/nas/app-data/video-detections/data/frames:/data/frames
+      - /mnt/nas/app-data/video-detections/data/models:/data/models
     command: celery -A worker.app worker -Q gpu,train -c 1 --loglevel=INFO
     networks:
       - prod
@@ -105,7 +105,7 @@ services:
     restart: unless-stopped
     environment: *vd-env
     volumes:
-      - /home/griffin/video-detections/data/videos:/data/videos
+      - /mnt/nas/app-data/video-detections/data/videos:/data/videos
     networks:
       - prod
 

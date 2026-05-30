@@ -268,6 +268,11 @@ same-host LAN.
   the new class to that YOLO output index so detections of that class are
   routed to the row immediately (no model re-activation needed). The index
   must be unique across `classes` — duplicates are rejected with `409`.
+  `DELETE` is a soft delete (`is_active=false`); `PATCH {is_active:true}`
+  reactivates. The `/classes` page exposes both directions (Deactivate /
+  Reactivate) so a soft-deleted class is recoverable from the UI — the
+  labeling picker only lists `is_active` classes, so deactivating hides a
+  class from assignment without losing its audited detections.
 - `GET /classes/catalog` — names offered to the "New class" picker: the
   union of the active base YOLO model's class list (`kind="yolo"`,
   `target_class_id IS NULL`, `is_active=true`, read from

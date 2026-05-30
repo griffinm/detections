@@ -5,11 +5,17 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { ClassFormDialog } from "@/components/ClassFormDialog";
-import { useClasses, useDeleteClass, type VdClass } from "@/hooks/useClasses";
+import {
+  useClasses,
+  useDeleteClass,
+  useUpdateClass,
+  type VdClass,
+} from "@/hooks/useClasses";
 
 export function ClassesList() {
   const { data: classes = [], isPending } = useClasses();
   const deleteClass = useDeleteClass();
+  const updateClass = useUpdateClass();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<VdClass | null>(null);
 
@@ -19,6 +25,14 @@ export function ClassesList() {
       await deleteClass.mutateAsync(cls.id);
     } catch {
       toast.error("Could not deactivate class");
+    }
+  };
+
+  const reactivate = async (cls: VdClass): Promise<void> => {
+    try {
+      await updateClass.mutateAsync({ id: cls.id, is_active: true });
+    } catch {
+      toast.error("Could not reactivate class");
     }
   };
 
@@ -84,13 +98,21 @@ export function ClassesList() {
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      {cls.is_active && (
+                      {cls.is_active ? (
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={() => void deactivate(cls)}
                         >
                           Deactivate
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void reactivate(cls)}
+                        >
+                          Reactivate
                         </Button>
                       )}
                     </div>
